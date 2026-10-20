@@ -1,0 +1,65 @@
+[gd_scene load_steps=4 format=3 uid="uid://b2hh1o7pncg74"]
+
+[ext_resource type="Script" uid="uid://khb6xq58yxw" path="res://scenes/game/game_manager.gd" id="1"]
+[ext_resource type="PackedScene" path="res://scenes/board/board.tscn" id="2"]
+[ext_resource type="PackedScene" path="res://scenes/tray/tray.tscn" id="3"]
+
+[node name="Game" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1")
+
+[node name="Background" type="ColorRect" parent="."]
+layout_mode = 0
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+color = Color(0.12, 0.13, 0.16, 1)
+
+[node name="Tray" parent="." instance=ExtResource("3")]
+anchors_preset = 0
+
+[node name="Board" parent="." instance=ExtResource("2")]
+anchors_preset = 0
+
+[node name="ChronometerLabel" type="Label" parent="."]
+layout_mode = 0
+offset_left = 20.0
+offset_top = 16.0
+offset_right = 160.0
+offset_bottom = 48.0
+theme_override_colors/font_color = Color(1, 1, 1, 1)
+theme_override_font_sizes/font_size = 28
+text = "00:00"
+
+[node name="ResultLabel" type="Label" parent="."]
+layout_mode = 0
+anchor_left = 0.5
+anchor_right = 0.5
+offset_left = -200.0
+offset_top = 16.0
+offset_right = 200.0
+offset_bottom = 48.0
+theme_override_colors/font_color = Color(1, 1, 1, 1)
+theme_override_font_sizes/font_size = 28
+horizontal_alignment = 1
+
+[node name="RevealTimer" type="Timer" parent="."]
+wait_time = 8.0
+one_shot = true
+
+[node name="ReplayButton" type="Button" parent="."]
+layout_mode = 0
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -140.0
+offset_top = 16.0
+offset_right = -20.0
+offset_bottom = 56.0
+text = "Replay"
