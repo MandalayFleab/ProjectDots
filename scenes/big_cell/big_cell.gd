@@ -7,11 +7,10 @@ var slot_a: ShapePiece = null
 var slot_b: ShapePiece = null
 var merged_display: ShapePiece = null
 
-func is_full() -> bool:
-	return slot_a != null and slot_b != null
-
 func is_solved() -> bool:
-	return is_full() \
+	if required_spec == null:
+		return slot_a == null and slot_b == null
+	return slot_a != null and slot_b != null \
 		and slot_a.shape_type == required_spec.shape_type and slot_a.color == required_spec.color \
 		and slot_b.shape_type == required_spec.shape_type and slot_b.color == required_spec.color
 
@@ -70,7 +69,7 @@ func _drop_data(_at_position: Vector2, data: Variant) -> void:
 
 	# Two different shapes together is never a valid state: expel both at once
 	# instead of waiting for the end-of-round check.
-	if is_full() and not _is_merged():
+	if slot_a != null and slot_b != null and not _is_merged():
 		tray.scatter(release_wrong_pieces())
 
 	piece_changed.emit()
@@ -101,7 +100,7 @@ func _show_merged() -> void:
 	merged_display = ShapePieceScene.instantiate()
 	merged_display.shape_type = slot_a.shape_type
 	merged_display.color = slot_a.color
-	merged_display.size = size - Vector2(20, 20)
+	merged_display.size = size * 0.9
 	merged_display.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	merged_display.position = (size - merged_display.size) * 0.5
 	add_child(merged_display)

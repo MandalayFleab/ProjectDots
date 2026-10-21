@@ -3,10 +3,6 @@ class_name BoardCell
 
 signal piece_changed
 
-# Half the gap between cells, so a drop landing in the gap still snaps to
-# the nearer cell instead of requiring the cursor to be exactly inside it.
-const DROP_MARGIN := Board.GAP * 0.5
-
 var required_spec: PieceSpec = null
 var tray: Tray = null
 var locked: bool = false
@@ -15,10 +11,11 @@ var current_piece: ShapePiece = null
 func has_requirement() -> bool:
 	return required_spec != null
 
-func is_full() -> bool:
-	return current_piece != null
-
 func is_solved() -> bool:
+	if required_spec == null:
+		# An intentionally empty cell is solved by staying empty -- it's still
+		# a valid drop target (that's the trap), just not a correct one.
+		return current_piece == null
 	return current_piece != null \
 		and current_piece.shape_type == required_spec.shape_type \
 		and current_piece.color == required_spec.color
@@ -41,10 +38,14 @@ func lock() -> void:
 		current_piece.locked = true
 
 func _has_point(point: Vector2) -> bool:
-	return Rect2(-DROP_MARGIN, -DROP_MARGIN, size.x + DROP_MARGIN * 2, size.y + DROP_MARGIN * 2).has_point(point)
+	# Grows the droppable area a bit past the visible edges -- proportional to
+	# cell size (not a fixed pixel count) so it still makes sense now that
+	# cells are sized dynamically instead of being a fixed 100px constant.
+	var margin: float = min(size.x, size.y) * 0.06
+	return Rect2(-margin, -margin, size.x + margin * 2, size.y + margin * 2).has_point(point)
 
 func _can_drop_data(_at_position: Vector2, data: Variant) -> bool:
-	return has_requirement() and not locked and data is ShapePiece
+	return not locked and data is ShapePiece
 
 func _drop_data(_at_position: Vector2, data: Variant) -> void:
 	var piece := data as ShapePiece

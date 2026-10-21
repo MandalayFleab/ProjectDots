@@ -1,9 +1,9 @@
 class_name LevelGenerator
 extends RefCounted
 
-const MAX_ROWS := 6
-const MAX_COLUMNS := 6
-const MAX_SHAPES := 8
+const MAX_ROWS := 5
+const MAX_COLUMNS := 5
+const MAX_SHAPES := 6
 const MAX_SLACK := 4
 const MAX_FILLED_BIG_CELLS := 4
 

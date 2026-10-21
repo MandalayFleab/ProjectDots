@@ -1,3 +1,9 @@
 # Godot 4+ specific ignores
 .godot/
 /android/
+
+# Web export output (rebuilt on demand by deploy.sh, not committed)
+/build/
+
+# macOS Finder metadata
+.DS_Store
