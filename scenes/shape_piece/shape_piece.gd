@@ -139,11 +139,32 @@ func _gui_input(event: InputEvent) -> void:
 	# _get_drag_data().
 	if get_parent() is Combiner:
 		return
+	# A piece sitting in a cell covers most of it, so presses on the piece
+	# also drive the cell's long-press expel (this piece stays STOP, unlike in
+	# the Combiner, so its own tap-to-select keeps working alongside).
+	var cell := get_parent() as BoardCell
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
 		if event.pressed:
 			_press_position = event.position
 			_press_active = true
+			if cell != null:
+				cell.start_hold()
 		elif _press_active:
 			_press_active = false
+			if cell != null:
+				cell.end_hold()
 			if event.position.distance_to(_press_position) < CLICK_DISTANCE_THRESHOLD:
 				Selection.select(self)
+
+# Called when a long press expels this piece mid-press, so the release that
+# follows isn't also read as a tap that selects it.
+func cancel_press() -> void:
+	_press_active = false
+
+# A piece already sitting in a cell would otherwise block drops onto that
+# cell -- forward to whichever cell the drag is in range of (see Selection).
+func _can_drop_data(_at_position: Vector2, data: Variant) -> bool:
+	return data is ShapePiece and Selection.find_drop_target(data) != null
+
+func _drop_data(_at_position: Vector2, data: Variant) -> void:
+	Selection.drop_into_target(data)

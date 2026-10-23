@@ -78,6 +78,14 @@ func build(level: LevelData, tray: Tray, available_size: Vector2) -> void:
 func get_cells() -> Array:
 	return _cells
 
+# Drops in the gaps between cells go to whichever cell is in range (green),
+# instead of being refused outright.
+func _can_drop_data(_at_position: Vector2, data: Variant) -> bool:
+	return data is ShapePiece and Selection.find_drop_target(data) != null
+
+func _drop_data(_at_position: Vector2, data: Variant) -> void:
+	Selection.drop_into_target(data)
+
 # Reflows the EXISTING cells (and whatever pieces they currently hold) to a
 # new available size, without regenerating the level -- used when the screen
 # resizes live mid-round, so the player's progress is never thrown away just

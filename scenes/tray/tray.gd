@@ -77,6 +77,9 @@ func _can_drop_data(_at_position: Vector2, data: Variant) -> bool:
 
 func _drop_data(at_position: Vector2, data: Variant) -> void:
 	var piece := data as ShapePiece
+	# Dropped just outside the board but in range of a (green) cell.
+	if Selection.drop_into_target(piece):
+		return
 	_take_piece(piece, at_position - piece.size * 0.5)
 
 # Slides pieces out of a source control (the board, Combiner, Divisor)
@@ -84,22 +87,53 @@ func _drop_data(at_position: Vector2, data: Variant) -> void:
 # point along one of the given sides and is launched outward, so even
 # pieces coming from the same cell spread out along the whole edge.
 func launch_from(pieces: Array[ShapePiece], source: Control, sides: Array) -> void:
-	var to_local := get_global_transform().affine_inverse()
-	var source_rect := Rect2(to_local * source.global_position, source.size)
+	var source_rect := _local_rect_of(source)
 	var starts: Array[Vector2] = []
 	for piece in pieces:
-		var start := _find_launch_start(piece.size, source_rect, sides, starts)
-		if start.is_empty():
+		if not _launch(piece, source_rect, sides, starts):
 			# No room along any of those sides (a squeezed layout) -- fall
 			# back to an instant placement rather than start behind a wall.
 			scatter([piece])
-			continue
-		var start_position: Vector2 = start["position"]
-		var normal: Vector2 = start["normal"]
-		_take_piece(piece, start_position)
-		starts.append(start_position)
-		var direction := normal.rotated(deg_to_rad(randf_range(-LAUNCH_SPREAD_DEGREES, LAUNCH_SPREAD_DEGREES)))
-		TrayCollision.launch(piece, direction, piece.size.x * randf_range(LAUNCH_DISTANCE_MIN, LAUNCH_DISTANCE_MAX))
+
+# Launches a piece out of whichever side of `source` is nearest to `origin`
+# (a control inside it, e.g. one cell of the board), starting level with
+# origin rather than anywhere along that side. Sides without room are
+# skipped in nearest-first order.
+func launch_from_nearest_side(piece: ShapePiece, source: Control, origin: Control) -> void:
+	var s := _local_rect_of(source)
+	var o := _local_rect_of(origin)
+	var distances := {
+		Side.TOP: o.position.y - s.position.y,
+		Side.BOTTOM: s.end.y - o.end.y,
+		Side.LEFT: o.position.x - s.position.x,
+		Side.RIGHT: s.end.x - o.end.x,
+	}
+	var sides := distances.keys()
+	sides.sort_custom(func(a, b): return distances[a] < distances[b])
+	for side in sides:
+		var span: Rect2
+		if side == Side.LEFT or side == Side.RIGHT:
+			span = Rect2(s.position.x, o.position.y, s.size.x, o.size.y)
+		else:
+			span = Rect2(o.position.x, s.position.y, o.size.x, s.size.y)
+		if _launch(piece, span, [side], []):
+			return
+	scatter([piece])
+
+func _launch(piece: ShapePiece, source_rect: Rect2, sides: Array, taken: Array[Vector2]) -> bool:
+	var start := _find_launch_start(piece.size, source_rect, sides, taken)
+	if start.is_empty():
+		return false
+	var start_position: Vector2 = start["position"]
+	var normal: Vector2 = start["normal"]
+	_take_piece(piece, start_position)
+	taken.append(start_position)
+	var direction := normal.rotated(deg_to_rad(randf_range(-LAUNCH_SPREAD_DEGREES, LAUNCH_SPREAD_DEGREES)))
+	TrayCollision.launch(piece, direction, piece.size.x * randf_range(LAUNCH_DISTANCE_MIN, LAUNCH_DISTANCE_MAX))
+	return true
+
+func _local_rect_of(control: Control) -> Rect2:
+	return get_global_transform().affine_inverse() * control.get_global_rect()
 
 # Returns {"position", "normal"} for a valid start spot, or {} if none was
 # found. Best-candidate sampling: of the valid spots tried, keeps the one
