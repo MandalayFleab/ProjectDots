@@ -37,9 +37,16 @@ var _active_tween: Tween = null
 func _draw() -> void:
 	var fill := Shapes.color_for(color)
 	var margin := 8.0
+	var rounding: float = (minf(size.x, size.y) - margin * 2.0) * Shapes.CORNER_ROUNDING_RATIO
 	match shape_type:
 		Shapes.Type.SQUARE:
-			draw_rect(Rect2(Vector2(margin, margin), size - Vector2(margin, margin) * 2), fill)
+			var points := PackedVector2Array([
+				Vector2(margin, margin),
+				Vector2(size.x - margin, margin),
+				Vector2(size.x - margin, size.y - margin),
+				Vector2(margin, size.y - margin),
+			])
+			draw_colored_polygon(Shapes.rounded_polygon(points, rounding), fill)
 		Shapes.Type.CIRCLE:
 			draw_circle(size * 0.5, size.x * 0.5 - margin, fill)
 		Shapes.Type.TRIANGLE:
@@ -48,7 +55,7 @@ func _draw() -> void:
 				Vector2(size.x - margin, size.y - margin),
 				Vector2(margin, size.y - margin),
 			])
-			draw_colored_polygon(points, fill)
+			draw_colored_polygon(Shapes.rounded_polygon(points, rounding), fill)
 	if selected:
 		draw_rect(Rect2(Vector2.ZERO, size), Color(1, 1, 1, 0.9), false, 4.0)
 

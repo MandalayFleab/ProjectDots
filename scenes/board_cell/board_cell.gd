@@ -219,7 +219,9 @@ func _gui_input(event: InputEvent) -> void:
 # Long press (on the cell or the piece sitting in it -- ShapePiece forwards
 # its presses here) expels the current piece. Same timing as the Combiner's.
 func start_hold() -> void:
-	if locked or current_piece == null:
+	# An IGNORE piece is mid-move or shrinking away after a failed check --
+	# expelling it then would race whatever is animating it.
+	if locked or current_piece == null or current_piece.mouse_filter == Control.MOUSE_FILTER_IGNORE:
 		return
 	_hold_active = true
 	_hold_id += 1

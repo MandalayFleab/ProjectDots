@@ -21,6 +21,10 @@ const REFERENCE_SCREEN_MIN_DIMENSION := 648.0
 # frame would trigger a full board/tray/UI recompute.
 const RESIZE_SETTLE_SECONDS := 0.3
 
+# How long the solution previews take to shrink away once the reveal time is
+# up, before the pieces are scrambled out of the board.
+const PREVIEW_SHRINK_SECONDS := 0.4
+
 @onready var board: Board = $Board
 @onready var tray: Tray = $Tray
 @onready var combiner: Combiner = $Combiner
@@ -44,6 +48,7 @@ var mistakes: int = 0
 # panel, alongside board_size_ratio = 1.0.
 var chrome_scale: float = 0.70
 
+var _checking_solution: bool = false
 var _ready_for_resize: bool = false
 var _resize_watch_active: bool = false
 var _last_resize_time: float = 0.0
@@ -266,7 +271,42 @@ func _start_round() -> void:
 		preview.position = (cell.size - preview.size) * 0.5
 	reveal_timer.start()
 
+# Shrinks each control toward its own center and resolves once they're gone,
+# returning false if Replay was pressed meanwhile (the round no longer
+# exists). The tweens are bound to the controls themselves, so a Replay
+# mid-shrink frees them along with their cells, while the wait uses a scene
+# timer that always fires. Input is ignored while shrinking -- callers that
+# keep the controls afterwards reset scale and mouse_filter themselves.
+func _shrink_away(controls: Array) -> bool:
+	var tweens: Array[Tween] = []
+	for control in controls:
+		control.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		control.pivot_offset = control.size * 0.5
+		var tween: Tween = control.create_tween()
+		tween.tween_property(control, "scale", Vector2.ZERO, PREVIEW_SHRINK_SECONDS) \
+			.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_IN)
+		tweens.append(tween)
+	var round_level := level
+	await get_tree().create_timer(PREVIEW_SHRINK_SECONDS).timeout
+	# The timer and the tweens end on the same frame, and the timer can fire
+	# first -- without this, a tween's final step would land AFTER a caller
+	# restored scale, shrinking a re-scrambled piece back to zero (invisible
+	# in the tray, which also stalls the next solution check).
+	for tween in tweens:
+		if tween.is_valid():
+			tween.kill()
+	for control in controls:
+		if is_instance_valid(control):
+			control.scale = Vector2.ZERO
+	return level == round_level
+
 func _on_reveal_timer_timeout() -> void:
+	var previews: Array = []
+	for cell in board.get_cells():
+		previews.append_array(cell.get_children())
+	if not await _shrink_away(previews):
+		return
+
 	for cell in board.get_cells():
 		for child in cell.get_children():
 			child.queue_free()
@@ -297,6 +337,10 @@ func _on_piece_changed() -> void:
 	# isn't resolving anything, so it must block readiness too.
 	if tray.get_child_count() > 0 or combiner.held_piece != null:
 		return
+	# A check already in progress is mid-shrink -- a late placement callback
+	# (e.g. an earlier animated move landing now) must not count mistakes twice.
+	if _checking_solution:
+		return
 	var open_cells: Array = []
 	for cell in board.get_cells():
 		if not cell.locked:
@@ -304,7 +348,7 @@ func _on_piece_changed() -> void:
 	_check_solution(open_cells)
 
 func _check_solution(open_cells: Array) -> void:
-	var wrong_pieces: Array[ShapePiece] = []
+	var wrong_cells: Array = []
 	var pending_empty_cells: Array = []
 	for cell in open_cells:
 		if cell.is_solved():
@@ -316,14 +360,37 @@ func _check_solution(open_cells: Array) -> void:
 				cell.lock()
 		else:
 			mistakes += 1
-			var released: Array[ShapePiece] = cell.release_wrong_pieces()
-			for piece in released:
-				# "Tried" is recorded here, at evaluation time, not when the
-				# piece was dropped -- so repositioning pieces during the
-				# "shape colocation" phase never burns an attempt by itself.
-				cell.remember_tried(piece)
-			wrong_pieces.append_array(released)
+			wrong_cells.append(cell)
 	mistakes_label.text = "Mistakes: %d" % mistakes
+
+	# Misplaced pieces shrink away in their cells first, same as the reveal
+	# previews, and only then get released and re-scrambled.
+	var shrinking: Array = []
+	for cell in wrong_cells:
+		if cell.current_piece != null:
+			shrinking.append(cell.current_piece)
+	if not shrinking.is_empty():
+		# A piece selected before the check could otherwise be tapped into
+		# another cell mid-shrink.
+		Selection.deselect()
+		_checking_solution = true
+		var still_this_round: bool = await _shrink_away(shrinking)
+		_checking_solution = false
+		if not still_this_round:
+			return
+
+	var wrong_pieces: Array[ShapePiece] = []
+	for cell in wrong_cells:
+		var released: Array[ShapePiece] = cell.release_wrong_pieces()
+		for piece in released:
+			# "Tried" is recorded here, at evaluation time, not when the
+			# piece was dropped -- so repositioning pieces during the
+			# "shape colocation" phase never burns an attempt by itself.
+			cell.remember_tried(piece)
+			# Back to full size for the scramble (release_wrong_pieces()'s
+			# cancel_animation() already restored its mouse_filter).
+			piece.scale = Vector2.ONE
+		wrong_pieces.append_array(released)
 
 	if wrong_pieces.is_empty():
 		for cell in pending_empty_cells:
