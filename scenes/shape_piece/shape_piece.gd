@@ -1,10 +1,30 @@
 extends Control
 class_name ShapePiece
 
+const DRAG_PREVIEW_ALPHA := 0.6
+const CLICK_DISTANCE_THRESHOLD := 6.0
+
+# A static var (not a const) so every piece shares one tunable value, and
+# the debug layout panel (F1, debug builds only) can compare different
+# sizes live instead of needing a code edit + restart per value tried.
+# 2.0 is a linear scale, i.e. 4x the original drag-preview AREA.
+static var drag_preview_scale: float = 2.0
+
 @export var shape_type: Shapes.Type = Shapes.Type.SQUARE
 @export var color: Shapes.PrimaryColor = Shapes.PrimaryColor.RED
 
 var locked: bool = false
+var selected: bool = false
+
+# Set by Combiner when this piece is the result of combining two others.
+var is_big: bool = false
+var original_a: PieceSpec = null
+var original_b: PieceSpec = null
+
+var _press_position: Vector2 = Vector2.ZERO
+var _press_active: bool = false
+var _pre_drag_parent: Node = null
+var _active_tween: Tween = null
 
 func _draw() -> void:
 	var fill := Shapes.color_for(color)
@@ -21,11 +41,88 @@ func _draw() -> void:
 				Vector2(margin, size.y - margin),
 			])
 			draw_colored_polygon(points, fill)
+	if selected:
+		draw_rect(Rect2(Vector2.ZERO, size), Color(1, 1, 1, 0.9), false, 4.0)
+
+func set_selected(active: bool) -> void:
+	selected = active
+	queue_redraw()
+
+func animate_to(target_position: Vector2, duration: float, on_finished: Callable = Callable()) -> void:
+	cancel_animation()
+	mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var tween := create_tween()
+	_active_tween = tween
+	tween.tween_property(self, "position", target_position, duration) \
+		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+	tween.finished.connect(func():
+		mouse_filter = Control.MOUSE_FILTER_STOP
+		if on_finished.is_valid():
+			on_finished.call()
+	)
+
+# Call when a piece is forcibly removed from a cell (e.g. ejected by the
+# round-end check) while it might still be mid-travel from an earlier
+# animated placement -- otherwise that old tween keeps running on an
+# already-relocated piece and can fire a stale completion callback later.
+func cancel_animation() -> void:
+	if _active_tween != null and _active_tween.is_valid():
+		_active_tween.kill()
+	_active_tween = null
+	mouse_filter = Control.MOUSE_FILTER_STOP
 
 func _get_drag_data(_at_position: Vector2) -> Variant:
 	if locked:
 		return null
+	if Selection.selected_piece == self:
+		Selection.deselect()
 	var preview := duplicate() as ShapePiece
-	preview.modulate.a = 0.75
-	set_drag_preview(preview)
+	preview.modulate.a = DRAG_PREVIEW_ALPHA
+	preview.pivot_offset = preview.size * 0.5
+	preview.scale = Vector2(drag_preview_scale, drag_preview_scale)
+	# Godot re-positions whatever control is passed to set_drag_preview() to
+	# the cursor every frame, overwriting its .position directly -- so
+	# offsetting the preview itself doesn't stick. It does NOT touch that
+	# control's children, though, so the fix is to wrap the actual shape in a
+	# plain anchor Control and offset the shape within that instead.
+	preview.position = -preview.pivot_offset
+	var preview_anchor := Control.new()
+	preview_anchor.add_child(preview)
+	set_drag_preview(preview_anchor)
+	# The native drag preview follows the cursor, but this original node stays
+	# put until _drop_data reparents it -- hide it for the duration so there
+	# isn't a visible duplicate sitting at the start position the whole time.
+	_pre_drag_parent = get_parent()
+	visible = false
+	Selection.highlight_for_drag(self)
 	return self
+
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_DRAG_END:
+		Selection.clear_drag_highlight()
+		# Only restore visibility ourselves if the drag was cancelled (nobody
+		# reparented this piece). A successful drop already reparented it into
+		# wherever it landed, and THAT code decides the correct visibility
+		# (e.g. a BigCell may want it hidden because it just formed a merge) --
+		# forcing it visible here would stomp on that decision.
+		if get_parent() == _pre_drag_parent:
+			visible = true
+
+func _gui_input(event: InputEvent) -> void:
+	if locked:
+		return
+	# While sitting inside the Combiner, this piece's own hitbox would
+	# otherwise swallow every tap meant for the Combiner itself (its mouse
+	# filter is PASS specifically so taps still reach it after this returns
+	# -- see Combiner._hold()). Dragging it out directly is unaffected,
+	# since drag initiation doesn't go through _gui_input.
+	if get_parent() is Combiner:
+		return
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
+		if event.pressed:
+			_press_position = event.position
+			_press_active = true
+		elif _press_active:
+			_press_active = false
+			if event.position.distance_to(_press_position) < CLICK_DISTANCE_THRESHOLD:
+				Selection.select(self)

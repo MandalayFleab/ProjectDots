@@ -3,6 +3,9 @@
 [ext_resource type="Script" uid="uid://khb6xq58yxw" path="res://scenes/game/game_manager.gd" id="1"]
 [ext_resource type="PackedScene" path="res://scenes/board/board.tscn" id="2"]
 [ext_resource type="PackedScene" path="res://scenes/tray/tray.tscn" id="3"]
+[ext_resource type="PackedScene" path="res://scenes/combiner/combiner.tscn" id="4"]
+[ext_resource type="PackedScene" path="res://scenes/divisor/divisor.tscn" id="5"]
+[ext_resource type="PackedScene" path="res://scenes/debug_layout_panel/debug_layout_panel.tscn" id="6"]
 
 [node name="Game" type="Control" unique_id=273081106]
 layout_mode = 3
@@ -28,6 +31,26 @@ anchors_preset = 0
 [node name="Board" parent="." unique_id=1656986876 instance=ExtResource("2")]
 anchors_preset = 0
 
+[node name="Combiner" parent="." unique_id=855323901 instance=ExtResource("4")]
+layout_mode = 0
+anchor_top = 1.0
+anchor_bottom = 1.0
+offset_left = 20.0
+offset_top = -180.0
+offset_right = 180.0
+offset_bottom = -20.0
+
+[node name="Divisor" parent="." unique_id=49324317 instance=ExtResource("5")]
+layout_mode = 0
+anchor_left = 1.0
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -180.0
+offset_top = -180.0
+offset_right = -20.0
+offset_bottom = -20.0
+
 [node name="ChronometerLabel" type="Label" parent="." unique_id=2105822660]
 layout_mode = 0
 offset_left = 20.0
@@ -51,7 +74,7 @@ theme_override_font_sizes/font_size = 28
 horizontal_alignment = 1
 
 [node name="RevealTimer" type="Timer" parent="." unique_id=141839280]
-wait_time = 8.0
+wait_time = 5.0
 one_shot = true
 
 [node name="ReplayButton" type="Button" parent="." unique_id=1939540945]
@@ -63,3 +86,15 @@ offset_top = 16.0
 offset_right = -20.0
 offset_bottom = 56.0
 text = "Replay"
+
+[node name="MistakesLabel" type="Label" parent="." unique_id=1621344759]
+layout_mode = 0
+offset_left = 20.0
+offset_top = 56.0
+offset_right = 200.0
+offset_bottom = 88.0
+theme_override_colors/font_color = Color(1, 1, 1, 1)
+theme_override_font_sizes/font_size = 22
+text = "Mistakes: 0"
+
+[node name="DebugLayoutPanel" parent="." unique_id=1834660980 instance=ExtResource("6")]
