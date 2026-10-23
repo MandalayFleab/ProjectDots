@@ -313,12 +313,8 @@ func _on_reveal_timer_timeout() -> void:
 
 	var piece_size: Vector2 = board.cell_size * 0.8
 	var pieces: Array[ShapePiece] = []
-	for spec in level.shapes_to_place:
-		var piece := ShapePieceScene.instantiate() as ShapePiece
-		piece.shape_type = spec.shape_type
-		piece.color = spec.color
-		piece.size = piece_size
-		pieces.append(piece)
+	for group in PieceDecomposer.random_disposition(level.shapes_to_place):
+		pieces.append(_make_scramble_piece(group, piece_size))
 
 	state = State.PLAYING
 	# Tray's size comes from anchors, not an explicit assignment like Board's --
@@ -326,6 +322,22 @@ func _on_reveal_timer_timeout() -> void:
 	# scattering, instead of trusting anchor propagation already happened.
 	tray.size = size
 	tray.launch_from(pieces, board, Tray.ALL_SIDES)
+
+# One group from PieceDecomposer.random_disposition(): a single spec makes a
+# normal piece, a pair makes a big one -- built exactly like the Combiner's
+# output (same originals, double size), so the Divisor can split it back.
+func _make_scramble_piece(group: Array, piece_size: Vector2) -> ShapePiece:
+	var spec: PieceSpec = group[0]
+	var piece := ShapePieceScene.instantiate() as ShapePiece
+	piece.shape_type = spec.shape_type
+	piece.color = spec.color
+	piece.size = piece_size
+	if group.size() == 2:
+		piece.is_big = true
+		piece.original_a = PieceSpec.new(spec.shape_type, spec.color)
+		piece.original_b = PieceSpec.new(spec.shape_type, spec.color)
+		piece.size = piece_size * 2.0
+	return piece
 
 func _on_piece_changed() -> void:
 	if state != State.PLAYING:
