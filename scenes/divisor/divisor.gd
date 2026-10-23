@@ -55,7 +55,7 @@ func _split(piece: ShapePiece) -> void:
 	piece.queue_free()
 	var p1 := _make_piece(spec_a)
 	var p2 := _make_piece(spec_b)
-	tray.scatter([p1, p2])
+	tray.launch_from([p1, p2], self, [Tray.Side.TOP])
 
 func _make_piece(spec: PieceSpec) -> ShapePiece:
 	var p: ShapePiece = ShapePieceScene.instantiate()

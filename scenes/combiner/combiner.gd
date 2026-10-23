@@ -28,8 +28,7 @@ func clear() -> void:
 func detach(piece: ShapePiece) -> void:
 	if held_piece == piece:
 		held_piece = null
-		# Leaving the combiner (expelled, dragged out, or consumed by a
-		# combine) -- restore normal input handling for wherever it ends up.
+		# Leaving the combiner (expelled or consumed by a combine) -- restore normal input handling for wherever it ends up.
 		piece.mouse_filter = Control.MOUSE_FILTER_STOP
 
 # Called on a live resize, after this node's own size has already been
@@ -110,8 +109,9 @@ func _resolve(piece: ShapePiece, previous: ShapePiece) -> void:
 	if held_piece == piece:
 		piece.mouse_filter = Control.MOUSE_FILTER_PASS
 
-	# If the previous piece got moved elsewhere in the meantime (e.g. dragged
-	# out mid-animation), leave it alone -- it's no longer ours to touch.
+	# If the previous piece got moved elsewhere in the meantime (e.g. the
+	# round was reset mid-animation), leave it alone -- it's no longer ours
+	# to touch.
 	if previous == null or previous.get_parent() != self:
 		return
 	if _combinable(previous, piece):
@@ -120,22 +120,17 @@ func _resolve(piece: ShapePiece, previous: ShapePiece) -> void:
 		previous.queue_free()
 		piece.queue_free()
 		held_piece = null
-		_accept_as_held(combined)
+		# A big piece can't be combined any further, so it's expelled right
+		# away instead of sitting in the Combiner waiting for a long press.
+		tray.launch_from([combined], self, [Tray.Side.TOP])
 	else:
 		previous.cancel_animation()
-		tray.scatter([previous])
-
-func _accept_as_held(piece: ShapePiece) -> void:
-	add_child(piece)
-	piece.visible = true
-	piece.position = (size - piece.size) * 0.5
-	_hold(piece)
+		tray.launch_from([previous], self, [Tray.Side.TOP])
 
 # A piece sitting inside the combiner needs PASS, not the default STOP --
 # STOP would swallow every tap before this panel's own _gui_input ever saw
-# it (the actual bug being fixed here), while IGNORE would also disable
-# dragging it back out directly. PASS keeps both working: the piece is
-# still a valid drag source, and taps also propagate up to the combiner.
+# it, so the long-press expel (now the only way out) would never fire.
+# Dragging it out is refused by ShapePiece._get_drag_data() itself.
 func _hold(piece: ShapePiece) -> void:
 	held_piece = piece
 	piece.mouse_filter = Control.MOUSE_FILTER_PASS
@@ -194,4 +189,4 @@ func _watch_long_press(id: int) -> void:
 	_press_active = false
 	var piece := held_piece
 	piece.cancel_animation()
-	tray.scatter([piece])
+	tray.launch_from([piece], self, [Tray.Side.TOP])

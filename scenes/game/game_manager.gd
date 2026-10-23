@@ -285,7 +285,7 @@ func _on_reveal_timer_timeout() -> void:
 	# force it in sync with the root's (reliably measured) size right before
 	# scattering, instead of trusting anchor propagation already happened.
 	tray.size = size
-	tray.scatter(pieces)
+	tray.launch_from(pieces, board, Tray.ALL_SIDES)
 
 func _on_piece_changed() -> void:
 	if state != State.PLAYING:
@@ -332,4 +332,4 @@ func _check_solution(open_cells: Array) -> void:
 		result_label.text = "Solved in %s!" % chronometer_label.text
 	else:
 		tray.size = size
-		tray.scatter(wrong_pieces)
+		tray.launch_from(wrong_pieces, board, Tray.ALL_SIDES)

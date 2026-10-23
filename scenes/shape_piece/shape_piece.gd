@@ -4,6 +4,10 @@ class_name ShapePiece
 const DRAG_PREVIEW_ALPHA := 0.6
 const CLICK_DISTANCE_THRESHOLD := 6.0
 
+# Membership marks a piece as mid-animation, so Tray can treat it as a mover
+# that pushes loose pieces aside (see TrayCollision).
+const MOVING_GROUP := &"moving_pieces"
+
 # A static var (not a const) so every piece shares one tunable value, and
 # the debug layout panel (F1, debug builds only) can compare different
 # sizes live instead of needing a code edit + restart per value tried.
@@ -15,6 +19,10 @@ static var drag_preview_scale: float = 2.0
 
 var locked: bool = false
 var selected: bool = false
+
+# Only meaningful while loose in the Tray -- driven by TrayCollision so a hit
+# piece keeps gliding briefly (air-hockey style) instead of stopping dead.
+var slide_velocity: Vector2 = Vector2.ZERO
 
 # Set by Combiner when this piece is the result of combining two others.
 var is_big: bool = false
@@ -51,11 +59,13 @@ func set_selected(active: bool) -> void:
 func animate_to(target_position: Vector2, duration: float, on_finished: Callable = Callable()) -> void:
 	cancel_animation()
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_to_group(MOVING_GROUP)
 	var tween := create_tween()
 	_active_tween = tween
 	tween.tween_property(self, "position", target_position, duration) \
 		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
 	tween.finished.connect(func():
+		_leave_moving_group()
 		mouse_filter = Control.MOUSE_FILTER_STOP
 		if on_finished.is_valid():
 			on_finished.call()
@@ -69,10 +79,21 @@ func cancel_animation() -> void:
 	if _active_tween != null and _active_tween.is_valid():
 		_active_tween.kill()
 	_active_tween = null
+	_leave_moving_group()
 	mouse_filter = Control.MOUSE_FILTER_STOP
+
+func _leave_moving_group() -> void:
+	if is_in_group(MOVING_GROUP):
+		remove_from_group(MOVING_GROUP)
 
 func _get_drag_data(_at_position: Vector2) -> Variant:
 	if locked:
+		return null
+	# Once inside the Combiner, a piece only leaves through its long-press
+	# expel (or by being combined). Returning null here lets the drag attempt
+	# fall through to the Combiner (this piece's mouse filter is PASS), which
+	# doesn't offer one either.
+	if get_parent() is Combiner:
 		return null
 	if Selection.selected_piece == self:
 		Selection.deselect()
@@ -114,8 +135,8 @@ func _gui_input(event: InputEvent) -> void:
 	# While sitting inside the Combiner, this piece's own hitbox would
 	# otherwise swallow every tap meant for the Combiner itself (its mouse
 	# filter is PASS specifically so taps still reach it after this returns
-	# -- see Combiner._hold()). Dragging it out directly is unaffected,
-	# since drag initiation doesn't go through _gui_input.
+	# -- see Combiner._hold()). Dragging it out is blocked separately, in
+	# _get_drag_data().
 	if get_parent() is Combiner:
 		return
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:

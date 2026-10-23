@@ -30,6 +30,6 @@ services:
   web:
     image: ${IMAGE}:${TAG}
     ports:
-      - "3000:80"
+      - "3005:80"
     restart: unless-stopped
 EOF
