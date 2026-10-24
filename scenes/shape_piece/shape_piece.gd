@@ -15,7 +15,7 @@ const MOVING_GROUP := &"moving_pieces"
 static var drag_preview_scale: float = 2.0
 
 @export var shape_type: Shapes.Type = Shapes.Type.SQUARE
-@export var color: Shapes.PrimaryColor = Shapes.PrimaryColor.RED
+@export var color: Shapes.PieceColor = Shapes.PieceColor.RED
 
 var locked: bool = false
 var selected: bool = false
@@ -24,7 +24,8 @@ var selected: bool = false
 # piece keeps gliding briefly (air-hockey style) instead of stopping dead.
 var slide_velocity: Vector2 = Vector2.ZERO
 
-# Set by Combiner when this piece is the result of combining two others.
+# Set by setup_pair() when this piece is made of two primary units (a big
+# piece, or a mixed colour of either size) -- the units it splits back into.
 var is_big: bool = false
 var original_a: PieceSpec = null
 var original_b: PieceSpec = null
@@ -33,6 +34,34 @@ var _press_position: Vector2 = Vector2.ZERO
 var _press_active: bool = false
 var _pre_drag_parent: Node = null
 var _active_tween: Tween = null
+
+# A piece made of a single primary unit -- always normal size.
+func setup_single(spec: PieceSpec, unit_size: Vector2) -> void:
+	shape_type = spec.shape_type
+	color = spec.color
+	is_big = false
+	original_a = null
+	original_b = null
+	size = unit_size
+
+# A piece made of two primary units of the same shape, remembered so the
+# Divisor can split it back. The same primary twice gives a big piece of
+# that colour; two different primaries give their mix, which -- unlike a
+# primary -- may be either size, since its two units are accounted for
+# either way (see Resizer).
+func setup_pair(a: PieceSpec, b: PieceSpec, big: bool, unit_size: Vector2) -> void:
+	shape_type = a.shape_type
+	color = Shapes.mix(a.color, b.color)
+	original_a = PieceSpec.new(a.shape_type, a.color)
+	original_b = PieceSpec.new(b.shape_type, b.color)
+	is_big = big
+	size = unit_size * 2.0 if big else unit_size
+
+# Resizer only: flips a mixed-colour piece between normal and big.
+func toggle_size() -> void:
+	is_big = not is_big
+	size = size * 2.0 if is_big else size * 0.5
+	queue_redraw()
 
 func _draw() -> void:
 	var fill := Shapes.color_for(color)

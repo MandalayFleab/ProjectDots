@@ -1,0 +1,10 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://scenes/resizer/resizer.gd" id="1"]
+
+[sub_resource type="StyleBoxEmpty" id="1"]
+
+[node name="Resizer" type="Panel"]
+size = Vector2(160, 160)
+theme_override_styles/panel = SubResource("1")
+script = ExtResource("1")

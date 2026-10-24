@@ -149,7 +149,7 @@ func _draw_inner_glow(color: Color) -> void:
 		draw_rect(rect, Color(color.r, color.g, color.b, alpha), false, 1.6)
 	draw_rect(Rect2(Vector2.ZERO, size), Color(color.r, color.g, color.b, 0.9), false, 2.0)
 
-func _has_tried(shape_type: Shapes.Type, color: Shapes.PrimaryColor, is_big: bool) -> bool:
+func _has_tried(shape_type: Shapes.Type, color: Shapes.PieceColor, is_big: bool) -> bool:
 	for entry in _tried_specs:
 		if entry["shape_type"] == shape_type and entry["color"] == color and entry["is_big"] == is_big:
 			return true

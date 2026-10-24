@@ -59,9 +59,7 @@ func _split(piece: ShapePiece) -> void:
 
 func _make_piece(spec: PieceSpec) -> ShapePiece:
 	var p: ShapePiece = ShapePieceScene.instantiate()
-	p.shape_type = spec.shape_type
-	p.color = spec.color
-	p.size = piece_size
+	p.setup_single(spec, piece_size)
 	return p
 
 func _gui_input(event: InputEvent) -> void:

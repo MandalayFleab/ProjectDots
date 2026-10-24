@@ -6,6 +6,7 @@
 [ext_resource type="PackedScene" path="res://scenes/combiner/combiner.tscn" id="4"]
 [ext_resource type="PackedScene" path="res://scenes/divisor/divisor.tscn" id="5"]
 [ext_resource type="PackedScene" path="res://scenes/debug_layout_panel/debug_layout_panel.tscn" id="6"]
+[ext_resource type="PackedScene" path="res://scenes/resizer/resizer.tscn" id="7"]
 
 [node name="Game" type="Control" unique_id=273081106]
 layout_mode = 3
@@ -50,6 +51,11 @@ offset_left = -180.0
 offset_top = -180.0
 offset_right = -20.0
 offset_bottom = -20.0
+
+[node name="Resizer" parent="." unique_id=1177714731 instance=ExtResource("7")]
+layout_mode = 0
+offset_right = 160.0
+offset_bottom = 160.0
 
 [node name="ChronometerLabel" type="Label" parent="." unique_id=2105822660]
 layout_mode = 0

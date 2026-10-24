@@ -1,39 +1,57 @@
 class_name PieceDecomposer
 extends RefCounted
 
-# Chance that any given pair of identical normal pieces is handed out
-# pre-combined as one big piece when the round is scrambled.
+# Chance that any given unit is paired with the next one of the same shape
+# when the round is scrambled, instead of being handed out on its own.
 const PAIR_COMBINE_CHANCE := 0.5
+# Chance that a mixed-colour pair comes out big rather than normal size.
+const MIXED_BIG_CHANCE := 0.5
 
-static func decompose_big(spec: PieceSpec) -> Array[PieceSpec]:
-	return [PieceSpec.new(spec.shape_type, spec.color), PieceSpec.new(spec.shape_type, spec.color)]
+# Breaks a required piece down into the primary units it's made of: one for
+# a normal primary, two of that colour for a big primary, and one of each
+# component for a mixed colour (big or normal -- the Resizer only changes
+# its size, never its units).
+static func to_units(spec: PieceSpec, big: bool) -> Array[PieceSpec]:
+	var units: Array[PieceSpec] = []
+	if Shapes.is_primary(spec.color):
+		for i in (2 if big else 1):
+			units.append(PieceSpec.new(spec.shape_type, spec.color))
+	else:
+		for component in Shapes.components(spec.color):
+			units.append(PieceSpec.new(spec.shape_type, component))
+	return units
 
-# Randomly regroups a level's (all-normal) pieces for the scramble: every
-# pair of identical pieces may be handed out as one big piece instead. This
-# never adds or removes a piece and always stays solvable -- the Divisor
-# splits a big piece back into exactly that pair, and the Combiner rebuilds
-# it from them -- so the player just starts from a different disposition.
+# Randomly regroups a level's primary units for the scramble: any two units
+# of the same shape may be handed out as one piece instead -- a big primary
+# if they share a colour, otherwise their mixed colour at a random size.
+# This never adds or removes a unit, and every grouping stays solvable: the
+# Combiner, Divisor and Resizer between them can turn any grouping of the
+# same units into any other.
 #
-# Returns one entry per piece to create: an Array[PieceSpec] holding either
-# a single spec (a normal piece) or the two specs a big piece is made of.
-static func random_disposition(specs: Array[PieceSpec]) -> Array:
-	var by_type := {}
-	for spec in specs:
-		var key := Vector2i(spec.shape_type, spec.color)
-		if not by_type.has(key):
-			by_type[key] = []
-		by_type[key].append(spec)
+# Returns one entry per piece to create: {"units": Array[PieceSpec]} holding
+# one unit (a normal primary) or two, plus "big" for the piece's size.
+static func random_disposition(units: Array[PieceSpec]) -> Array:
+	var by_shape := {}
+	for unit in units:
+		if not by_shape.has(unit.shape_type):
+			by_shape[unit.shape_type] = []
+		by_shape[unit.shape_type].append(unit)
 
 	var groups: Array = []
-	for same_type in by_type.values():
+	for same_shape in by_shape.values():
+		# Shuffled first, so which colours end up paired is random too.
+		same_shape.shuffle()
 		var i := 0
-		while i < same_type.size():
-			var has_pair: bool = i + 1 < same_type.size()
+		while i < same_shape.size():
+			var has_pair: bool = i + 1 < same_shape.size()
 			if has_pair and randf() < PAIR_COMBINE_CHANCE:
-				groups.append([same_type[i], same_type[i + 1]])
+				var a: PieceSpec = same_shape[i]
+				var b: PieceSpec = same_shape[i + 1]
+				var big: bool = a.color == b.color or randf() < MIXED_BIG_CHANCE
+				groups.append({"units": [a, b], "big": big})
 				i += 2
 			else:
-				groups.append([same_type[i]])
+				groups.append({"units": [same_shape[i]], "big": false})
 				i += 1
 	groups.shuffle()
 	return groups

@@ -39,8 +39,10 @@ func rescale(scale_factor: float) -> void:
 		held_piece.size *= scale_factor
 		held_piece.position = (size - held_piece.size) * 0.5
 
+# Only single primary units go in -- a mixed colour is already two units, so
+# combining it further would have no valid result.
 func can_accept(piece: ShapePiece) -> bool:
-	return not piece.is_big
+	return not piece.is_big and Shapes.is_primary(piece.color)
 
 func _draw() -> void:
 	# Fully proportional to size (no fixed pixel values) -- resizing this node
@@ -135,19 +137,15 @@ func _hold(piece: ShapePiece) -> void:
 	held_piece = piece
 	piece.mouse_filter = Control.MOUSE_FILTER_PASS
 
-# The color half of this condition is temporary -- once color-mixing exists,
-# differently-colored matching shapes should be combinable too.
+# Any two primary units of the same shape: the same colour makes a big piece
+# of that colour, different colours make a big piece of their mix.
 func _combinable(a: ShapePiece, b: ShapePiece) -> bool:
-	return not a.is_big and not b.is_big and a.shape_type == b.shape_type and a.color == b.color
+	return can_accept(a) and can_accept(b) and a.shape_type == b.shape_type
 
+# Always big -- shrinking a mixed colour is the Resizer's job.
 func _combine(a: ShapePiece, b: ShapePiece) -> ShapePiece:
 	var combined: ShapePiece = ShapePieceScene.instantiate()
-	combined.shape_type = a.shape_type
-	combined.color = a.color
-	combined.is_big = true
-	combined.original_a = PieceSpec.new(a.shape_type, a.color)
-	combined.original_b = PieceSpec.new(b.shape_type, b.color)
-	combined.size = a.size * 2.0
+	combined.setup_pair(PieceSpec.new(a.shape_type, a.color), PieceSpec.new(b.shape_type, b.color), true, a.size)
 	return combined
 
 func _gui_input(event: InputEvent) -> void:

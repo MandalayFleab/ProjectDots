@@ -4,7 +4,7 @@ const ShapePieceScene := preload("res://scenes/shape_piece/shape_piece.tscn")
 
 enum State { SHOWING, PLAYING, WON }
 
-# UI chrome (Combiner, Divisor, Replay button, the info labels) is scaled
+# UI chrome (Combiner, Divisor, Resizer, Replay button, the info labels) is scaled
 # from the SCREEN's own size, not from board.cell_size -- cell_size varies
 # round to round purely from the random row/column count LevelGenerator
 # picks (fewer cells means bigger individual cells for the same budget),
@@ -29,6 +29,7 @@ const PREVIEW_SHRINK_SECONDS := 0.4
 @onready var tray: Tray = $Tray
 @onready var combiner: Combiner = $Combiner
 @onready var divisor: Divisor = $Divisor
+@onready var resizer: Resizer = $Resizer
 @onready var reveal_timer: Timer = $RevealTimer
 @onready var chronometer_label: Label = $ChronometerLabel
 @onready var result_label: Label = $ResultLabel
@@ -116,6 +117,7 @@ func _relayout_for_resize() -> void:
 		Rect2(board.position, board.size),
 		Rect2(combiner.position, combiner.size),
 		Rect2(divisor.position, divisor.size),
+		Rect2(resizer.position, resizer.size),
 	]
 
 func _new_game() -> void:
@@ -148,12 +150,14 @@ func _new_game() -> void:
 	board.position = safe_rect.position + (safe_rect.size - board.size) * 0.5
 	combiner.tray = tray
 	divisor.tray = tray
+	resizer.tray = tray
 	divisor.piece_size = board.cell_size * 0.8
 	_apply_ui_scale()
 	tray.exclusion_rects = [
 		Rect2(board.position, board.size),
 		Rect2(combiner.position, combiner.size),
 		Rect2(divisor.position, divisor.size),
+		Rect2(resizer.position, resizer.size),
 	]
 	_start_round()
 	_ready_for_resize = true
@@ -196,6 +200,9 @@ func _apply_ui_scale() -> void:
 	combiner.position = Vector2(margin, bottom_row_y)
 	divisor.size = Vector2(combiner_divisor_side, combiner_divisor_side)
 	divisor.position = Vector2(size.x - margin - combiner_divisor_side, bottom_row_y)
+	# Resizer sits centred between them, on the same bottom row.
+	resizer.size = Vector2(combiner_divisor_side, combiner_divisor_side)
+	resizer.position = Vector2((size.x - combiner_divisor_side) * 0.5, bottom_row_y)
 
 	var button_size: Vector2 = m["button_size"]
 	replay_button.size = button_size
@@ -323,20 +330,16 @@ func _on_reveal_timer_timeout() -> void:
 	tray.size = size
 	tray.launch_from(pieces, board, Tray.ALL_SIDES)
 
-# One group from PieceDecomposer.random_disposition(): a single spec makes a
-# normal piece, a pair makes a big one -- built exactly like the Combiner's
-# output (same originals, double size), so the Divisor can split it back.
-func _make_scramble_piece(group: Array, piece_size: Vector2) -> ShapePiece:
-	var spec: PieceSpec = group[0]
+# One group from PieceDecomposer.random_disposition(): a single unit makes a
+# normal primary piece, a pair goes through the same setup_pair() the
+# Combiner uses, so the Divisor/Resizer treat it exactly like one of theirs.
+func _make_scramble_piece(group: Dictionary, piece_size: Vector2) -> ShapePiece:
+	var units: Array = group["units"]
 	var piece := ShapePieceScene.instantiate() as ShapePiece
-	piece.shape_type = spec.shape_type
-	piece.color = spec.color
-	piece.size = piece_size
-	if group.size() == 2:
-		piece.is_big = true
-		piece.original_a = PieceSpec.new(spec.shape_type, spec.color)
-		piece.original_b = PieceSpec.new(spec.shape_type, spec.color)
-		piece.size = piece_size * 2.0
+	if units.size() == 2:
+		piece.setup_pair(units[0], units[1], group["big"], piece_size)
+	else:
+		piece.setup_single(units[0], piece_size)
 	return piece
 
 func _on_piece_changed() -> void:

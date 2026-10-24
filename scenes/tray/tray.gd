@@ -90,9 +90,14 @@ func launch_from(pieces: Array[ShapePiece], source: Control, sides: Array) -> vo
 	var source_rect := _local_rect_of(source)
 	var starts: Array[Vector2] = []
 	for piece in pieces:
-		if not _launch(piece, source_rect, sides, starts):
-			# No room along any of those sides (a squeezed layout) -- fall
-			# back to an instant placement rather than start behind a wall.
+		if _launch(piece, source_rect, sides, starts):
+			continue
+		# No room right next to the requested sides (e.g. the board sits just
+		# above the Resizer, closer than a piece is tall) -- still slide it
+		# out from somewhere, rather than teleporting it.
+		if _launch(piece, source_rect, ALL_SIDES, starts):
+			continue
+		if not _launch_from_nearest_free(piece, source_rect):
 			scatter([piece])
 
 # Launches a piece out of whichever side of `source` is nearest to `origin`
@@ -118,7 +123,8 @@ func launch_from_nearest_side(piece: ShapePiece, source: Control, origin: Contro
 			span = Rect2(o.position.x, s.position.y, o.size.x, s.size.y)
 		if _launch(piece, span, [side], []):
 			return
-	scatter([piece])
+	if not _launch_from_nearest_free(piece, o):
+		scatter([piece])
 
 func _launch(piece: ShapePiece, source_rect: Rect2, sides: Array, taken: Array[Vector2]) -> bool:
 	var start := _find_launch_start(piece.size, source_rect, sides, taken)
@@ -129,6 +135,36 @@ func _launch(piece: ShapePiece, source_rect: Rect2, sides: Array, taken: Array[V
 	_take_piece(piece, start_position)
 	taken.append(start_position)
 	var direction := normal.rotated(deg_to_rad(randf_range(-LAUNCH_SPREAD_DEGREES, LAUNCH_SPREAD_DEGREES)))
+	TrayCollision.launch(piece, direction, piece.size.x * randf_range(LAUNCH_DISTANCE_MIN, LAUNCH_DISTANCE_MAX))
+	return true
+
+# Last resort before an instant scatter: starts the piece at the free spot
+# closest to the source and slides it straight away from the source, so it
+# still visibly comes out of it. False only if the tray has no free spot.
+func _launch_from_nearest_free(piece: ShapePiece, source_rect: Rect2) -> bool:
+	var origin := source_rect.get_center()
+	var step: float = maxf(minf(piece.size.x, piece.size.y) * 0.25, 4.0)
+	var max_x: float = size.x - piece.size.x
+	var max_y: float = size.y - piece.size.y
+	var best := Vector2.ZERO
+	var best_distance := INF
+	var y := 0.0
+	while y <= max_y:
+		var x := 0.0
+		while x <= max_x:
+			var candidate := Vector2(x, y)
+			if not _is_excluded(candidate, piece.size):
+				var distance := (candidate + piece.size * 0.5).distance_squared_to(origin)
+				if distance < best_distance:
+					best = candidate
+					best_distance = distance
+			x += step
+		y += step
+	if best_distance == INF:
+		return false
+	_take_piece(piece, best)
+	var away := (best + piece.size * 0.5 - origin).normalized()
+	var direction := away.rotated(deg_to_rad(randf_range(-LAUNCH_SPREAD_DEGREES, LAUNCH_SPREAD_DEGREES)))
 	TrayCollision.launch(piece, direction, piece.size.x * randf_range(LAUNCH_DISTANCE_MIN, LAUNCH_DISTANCE_MAX))
 	return true
 
