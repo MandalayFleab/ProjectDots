@@ -24,7 +24,7 @@ func build(level: LevelData, tray: Tray, available_size: Vector2) -> void:
 	_cells = []
 	_level = level
 
-	# Sized against LevelGenerator's fixed maximum board dimension, not this
+	# Sized against the mode's maximum board dimension, not this
 	# particular level's actual rows/columns -- otherwise a round that
 	# happens to generate a smaller board (fewer cells to divide the same
 	# budget between) gets visibly bigger cells/pieces than one that
@@ -32,7 +32,7 @@ func build(level: LevelData, tray: Tray, available_size: Vector2) -> void:
 	# layout. Using the worst case keeps cell (and therefore piece) size
 	# constant across every round on a given device; a smaller board just
 	# ends up with some unused space around it instead.
-	var max_dimension: int = max(LevelGenerator.MAX_ROWS, LevelGenerator.MAX_COLUMNS)
+	var max_dimension: int = level.max_dimension
 	var budget: float = min(available_size.x, available_size.y)
 	var raw_cell: float = budget / (max_dimension + (max_dimension - 1) * GAP_RATIO)
 	raw_cell = max(raw_cell, MIN_CELL_SIZE)
@@ -93,7 +93,7 @@ func relayout(available_size: Vector2) -> float:
 
 	# Same fixed-reference reasoning as build() above -- keeps a live resize
 	# consistent with the rest of this round's own sizing.
-	var max_dimension: int = max(LevelGenerator.MAX_ROWS, LevelGenerator.MAX_COLUMNS)
+	var max_dimension: int = _level.max_dimension
 	var budget: float = min(available_size.x, available_size.y)
 	var raw_cell: float = budget / (max_dimension + (max_dimension - 1) * GAP_RATIO)
 	raw_cell = max(raw_cell, MIN_CELL_SIZE)

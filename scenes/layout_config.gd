@@ -26,6 +26,7 @@ const FIELDS := [
 	"board_fill",
 	"items_fill",
 	"info_text_scale",
+	"preview_ratio",
 ]
 
 # Share of the main axis taken by the side band (horizontal: left column
@@ -45,6 +46,9 @@ var board_fill: float = 1.0
 var items_fill: float = 0.85
 # Multiplier over the info texts' auto-fitted font size.
 var info_text_scale: float = 1.0
+# Puzzle mode's solution preview: the most it takes of the scramble zone's
+# shorter side (it sits in one of that zone's corners).
+var preview_ratio: float = 0.35
 
 static func from_dict(values: Dictionary) -> LayoutConfig:
 	var config := LayoutConfig.new()

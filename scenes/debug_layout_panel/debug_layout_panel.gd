@@ -26,6 +26,7 @@ const FIELD_SPECS := {
 	"board_fill": [0.5, 1.0, 0.01, "Board fill", "Board fill", false],
 	"items_fill": [0.3, 1.0, 0.01, "Items fill", "Items fill", false],
 	"info_text_scale": [0.5, 2.0, 0.05, "Info text scale", "Info text scale", false],
+	"preview_ratio": [0.15, 0.8, 0.01, "Puzzle preview size", "Puzzle preview size", true],
 }
 
 @onready var vbox: VBoxContainer = $Scroll/Margin/VBox

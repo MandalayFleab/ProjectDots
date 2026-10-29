@@ -64,27 +64,7 @@ func toggle_size() -> void:
 	queue_redraw()
 
 func _draw() -> void:
-	var fill := Shapes.color_for(color)
-	var margin := 8.0
-	var rounding: float = (minf(size.x, size.y) - margin * 2.0) * Shapes.CORNER_ROUNDING_RATIO
-	match shape_type:
-		Shapes.Type.SQUARE:
-			var points := PackedVector2Array([
-				Vector2(margin, margin),
-				Vector2(size.x - margin, margin),
-				Vector2(size.x - margin, size.y - margin),
-				Vector2(margin, size.y - margin),
-			])
-			draw_colored_polygon(Shapes.rounded_polygon(points, rounding), fill)
-		Shapes.Type.CIRCLE:
-			draw_circle(size * 0.5, size.x * 0.5 - margin, fill)
-		Shapes.Type.TRIANGLE:
-			var points := PackedVector2Array([
-				Vector2(size.x * 0.5, margin),
-				Vector2(size.x - margin, size.y - margin),
-				Vector2(margin, size.y - margin),
-			])
-			draw_colored_polygon(Shapes.rounded_polygon(points, rounding), fill)
+	Shapes.draw_shape(self, shape_type, color, Rect2(Vector2.ZERO, size), 8.0)
 	if selected:
 		draw_rect(Rect2(Vector2.ZERO, size), Color(1, 1, 1, 0.9), false, 4.0)
 

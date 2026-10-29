@@ -55,6 +55,32 @@ static func rounded_polygon(points: PackedVector2Array, radius: float) -> Packed
 			result.append(from.lerp(corner, t).lerp(corner.lerp(to, t), t))
 	return result
 
+# Draws a piece's shape filling `rect` (minus `margin` on every side) onto
+# any canvas item -- shared by ShapePiece and the Puzzle mode's solution
+# preview, so both always look the same.
+static func draw_shape(canvas: CanvasItem, type: Type, color: PieceColor, rect: Rect2, margin: float) -> void:
+	var fill := color_for(color)
+	var inner := rect.grow(-margin)
+	var rounding: float = minf(inner.size.x, inner.size.y) * CORNER_ROUNDING_RATIO
+	match type:
+		Type.SQUARE:
+			var points := PackedVector2Array([
+				inner.position,
+				Vector2(inner.end.x, inner.position.y),
+				inner.end,
+				Vector2(inner.position.x, inner.end.y),
+			])
+			canvas.draw_colored_polygon(rounded_polygon(points, rounding), fill)
+		Type.CIRCLE:
+			canvas.draw_circle(rect.get_center(), inner.size.x * 0.5, fill)
+		Type.TRIANGLE:
+			var points := PackedVector2Array([
+				Vector2(inner.get_center().x, inner.position.y),
+				inner.end,
+				Vector2(inner.position.x, inner.end.y),
+			])
+			canvas.draw_colored_polygon(rounded_polygon(points, rounding), fill)
+
 static func color_for(color: PieceColor) -> Color:
 	match color:
 		PieceColor.RED:

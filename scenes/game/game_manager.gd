@@ -4,6 +4,10 @@ const ShapePieceScene := preload("res://scenes/shape_piece/shape_piece.tscn")
 
 enum State { SHOWING, PLAYING, WON }
 enum LayoutMode { AUTO, HORIZONTAL, VERTICAL }
+# Memory: the solution shows on the board for a few seconds, then must be
+# rebuilt from memory. Puzzle: no reveal -- a miniature of the solution
+# (SolutionPreview) stays in the scramble zone for the whole round.
+enum GameMode { MEMORY, PUZZLE }
 
 # After every layout pass -- lets the debug layout panel follow an automatic
 # switch between the horizontal and vertical distributions.
@@ -29,19 +33,27 @@ const PREVIEW_SHRINK_SECONDS := 0.4
 @onready var result_label: Label = $ResultLabel
 @onready var replay_button: Button = $ReplayButton
 @onready var mistakes_label: Label = $MistakesLabel
+@onready var mode_button: Button = $ModeButton
+@onready var solution_preview: SolutionPreview = $SolutionPreview
 
 var state: State = State.SHOWING
 var elapsed_time: float = 0.0
 var level: LevelData
 var mistakes: int = 0
+var game_mode: GameMode = GameMode.MEMORY
+
+# What each mode generates its levels from (see LevelSettings) -- kept
+# separate so each mode can have its own board sizes and shape counts.
+var memory_settings := LevelSettings.from_dict({"min_rows": 3, "max_rows": 5, "min_columns": 3, "max_columns": 5, "min_shapes": 2, "max_shapes": 5, "min_combined_color_shapes": 0, "max_combined_color_shapes": 2, "max_slack": 4, "max_filled_big_cells": 4})
+var puzzle_settings := LevelSettings.from_dict({"min_rows": 4, "max_rows": 6, "min_columns": 4, "max_columns": 6, "min_shapes": 5, "max_shapes": 9, "min_combined_color_shapes": 1, "max_combined_color_shapes": 3, "max_slack": 4, "max_filled_big_cells": 4})
 
 # The two standard distributions (see LayoutConfig) -- which one applies
 # depends only on the screen's shape, and each is tuned separately, so the
 # same element can take a different proportion in each. Tuned live through
 # the debug layout panel (F1, debug builds only), whose "Copy values" button
 # prints these exact lines with the values picked there.
-var horizontal_layout := LayoutConfig.from_dict({"side_ratio": 0.15, "board_ratio": 0.50, "info_ratio": 0.40, "margin_ratio": 0.02, "board_fill": 1.00, "items_fill": 0.85, "info_text_scale": 1.00})
-var vertical_layout := LayoutConfig.from_dict({"side_ratio": 0.20, "board_ratio": 0.50, "info_ratio": 0.28, "margin_ratio": 0.02, "board_fill": 1.00, "items_fill": 0.85, "info_text_scale": 1.00})
+var horizontal_layout := LayoutConfig.from_dict({"side_ratio": 0.15, "board_ratio": 0.50, "info_ratio": 0.40, "margin_ratio": 0.02, "board_fill": 1.00, "items_fill": 0.85, "info_text_scale": 1.00, "preview_ratio": 0.35})
+var vertical_layout := LayoutConfig.from_dict({"side_ratio": 0.20, "board_ratio": 0.50, "info_ratio": 0.28, "margin_ratio": 0.02, "board_fill": 1.00, "items_fill": 0.85, "info_text_scale": 1.00, "preview_ratio": 0.35})
 
 # Debug layout panel only: forces one distribution whatever the screen's
 # shape, so both can be tuned from the same window.
@@ -63,10 +75,25 @@ func _ready() -> void:
 	tray.set_anchors_preset(Control.PRESET_TOP_LEFT)
 	reveal_timer.timeout.connect(_on_reveal_timer_timeout)
 	replay_button.pressed.connect(_on_replay_pressed)
+	mode_button.toggled.connect(_on_mode_toggled)
+	_update_mode_button()
 	await _new_game()
 
 func _on_replay_pressed() -> void:
 	await _new_game()
+
+# Switching mode starts a fresh round in the new mode right away.
+func _on_mode_toggled(puzzle: bool) -> void:
+	game_mode = GameMode.PUZZLE if puzzle else GameMode.MEMORY
+	_update_mode_button()
+	await _new_game()
+
+func _update_mode_button() -> void:
+	mode_button.set_pressed_no_signal(game_mode == GameMode.PUZZLE)
+	mode_button.text = "Puzzle" if game_mode == GameMode.PUZZLE else "Memory"
+
+func _level_settings() -> LevelSettings:
+	return puzzle_settings if game_mode == GameMode.PUZZLE else memory_settings
 
 # Fires whenever this (full-rect-anchored) control's own size changes, which
 # happens automatically whenever the viewport/browser window does. Ignored
@@ -114,9 +141,9 @@ func _relayout_for_resize() -> void:
 
 	_place_tray()
 	tray.rescale(scale_factor, old_tray_size, tray.size)
-	_reset_tray_walls()
 
 	_apply_zones()
+	_reset_tray_walls()
 	combiner.rescale(scale_factor)
 	divisor.piece_size = board.cell_size * 0.8
 	layout_applied.emit()
@@ -141,7 +168,9 @@ func _new_game() -> void:
 	while size.x <= 0.0 or size.y <= 0.0:
 		await get_tree().process_frame
 
-	level = LevelGenerator.generate()
+	level = LevelGenerator.generate(_level_settings())
+	solution_preview.visible = game_mode == GameMode.PUZZLE
+	solution_preview.show_level(level)
 	zones = _compute_zones()
 	board.build(level, tray, _board_budget())
 	for cell in board.get_cells():
@@ -150,12 +179,12 @@ func _new_game() -> void:
 
 	_place_board()
 	_place_tray()
-	_reset_tray_walls()
 	combiner.tray = tray
 	divisor.tray = tray
 	resizer.tray = tray
 	divisor.piece_size = board.cell_size * 0.8
 	_apply_zones()
+	_reset_tray_walls()
 	_start_round()
 	_ready_for_resize = true
 	layout_applied.emit()
@@ -239,18 +268,30 @@ func _place_tray() -> void:
 	tray.position = zone.position
 	tray.size = zone.size
 
-# Nothing else lives inside the scramble zone anymore -- its own edges are
-# the only walls left. Reassigning also re-clamps every loose piece into the
-# (possibly resized) zone, so it must run after Tray.rescale().
+# The only thing inside the scramble zone besides the pieces is Puzzle
+# mode's solution preview -- the one wall (other than the zone's own edges)
+# loose pieces must keep out of. Reassigning also re-clamps every loose
+# piece into the (possibly resized) zone, so it must run after
+# Tray.rescale() and after _apply_preview() has placed the preview.
 func _reset_tray_walls() -> void:
-	var no_walls: Array[Rect2] = []
-	tray.exclusion_rects = no_walls
+	var walls: Array[Rect2] = []
+	if solution_preview.visible:
+		walls.append(Rect2(solution_preview.position - tray.position, solution_preview.size))
+	tray.exclusion_rects = walls
 
 func _apply_zones() -> void:
 	var config := active_layout()
 	_apply_items(zones["items"], config)
 	_apply_info(zones["info"], config)
 	_apply_result(zones["scramble"], config)
+	_apply_preview(zones["scramble"], config)
+
+# Bottom right corner of the scramble zone in the horizontal distribution,
+# top right in the vertical one.
+func _apply_preview(zone: Rect2, config: LayoutConfig) -> void:
+	var side: float = minf(zone.size.x, zone.size.y) * config.preview_ratio
+	var origin := Vector2(zone.end.x - side, zone.position.y if is_vertical_layout() else zone.end.y - side)
+	solution_preview.fit(origin, side)
 
 # Combiner, Resizer and Divisor share the playable items zone in equal
 # slots, laid along its longer side (a column in the horizontal distribution,
@@ -269,18 +310,23 @@ func _apply_items(zone: Rect2, config: LayoutConfig) -> void:
 		items[i].size = Vector2(side, side)
 		items[i].position = slots[i].get_center() - Vector2(side, side * height_factor) * 0.5
 
-# Chronometer, mistakes and the Replay button, one row each, every font
-# fitted to its row (and to the zone's width) instead of a fixed size.
+# Chronometer, mistakes, the mode switch and the Replay button, one row
+# each, every font fitted to its row (and to the zone's width) instead of a
+# fixed size.
 func _apply_info(zone: Rect2, config: LayoutConfig) -> void:
-	var rows := _cut(zone, true, [1.0 / 3.0, 1.0 / 3.0, 1.0 / 3.0])
+	var rows := _cut(zone, true, [0.25, 0.25, 0.25, 0.25])
 	_fit_label(chronometer_label, rows[0], "00:00", 0.7, config.info_text_scale)
 	_fit_label(mistakes_label, rows[1], "Mistakes: 00", 0.5, config.info_text_scale)
+	# Both buttons fitted from the same (longest) sample, so they come out
+	# the same size whatever the mode button currently says.
+	_fit_button(mode_button, rows[2], config.info_text_scale)
+	_fit_button(replay_button, rows[3], config.info_text_scale)
 
-	var row: Rect2 = rows[2]
-	var font_size: int = _fit_font_size("Replay", row.size.x * 0.7, row.size.y * 0.45, config.info_text_scale)
-	replay_button.add_theme_font_size_override("font_size", font_size)
-	replay_button.size = Vector2(minf(row.size.x, font_size * 5.0), minf(row.size.y * 0.85, font_size * 2.0))
-	replay_button.position = row.get_center() - replay_button.size * 0.5
+func _fit_button(button: Button, row: Rect2, text_scale: float) -> void:
+	var font_size: int = _fit_font_size("Memory", row.size.x * 0.7, row.size.y * 0.45, text_scale)
+	button.add_theme_font_size_override("font_size", font_size)
+	button.size = Vector2(minf(row.size.x, font_size * 5.5), minf(row.size.y * 0.85, font_size * 2.0))
+	button.position = row.get_center() - button.size * 0.5
 
 # The scramble zone is empty once the round is won, so the result shows up
 # in its middle.
@@ -323,6 +369,11 @@ func _start_round() -> void:
 	state = State.SHOWING
 	elapsed_time = 0.0
 	chronometer_label.text = "00:00"
+	if game_mode == GameMode.PUZZLE:
+		# The solution preview stays up the whole round -- nothing to
+		# memorize first, so the pieces scramble out right away.
+		_scramble_pieces()
+		return
 	for cell in board.get_cells():
 		if not cell.has_requirement():
 			continue
@@ -374,7 +425,9 @@ func _on_reveal_timer_timeout() -> void:
 	for cell in board.get_cells():
 		for child in cell.get_children():
 			child.queue_free()
+	_scramble_pieces()
 
+func _scramble_pieces() -> void:
 	var piece_size: Vector2 = board.cell_size * 0.8
 	var pieces: Array[ShapePiece] = []
 	for group in PieceDecomposer.random_disposition(level.shapes_to_place):
