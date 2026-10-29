@@ -89,8 +89,13 @@ func _drop_data(at_position: Vector2, data: Variant) -> void:
 func launch_from(pieces: Array[ShapePiece], source: Control, sides: Array) -> void:
 	var source_rect := _local_rect_of(source)
 	var starts: Array[Vector2] = []
+	var entry := _entry_edge(source_rect)
 	for piece in pieces:
 		if _launch(piece, source_rect, sides, starts):
+			continue
+		# The source sits in its own zone, outside the tray -- enter through
+		# the tray edge facing it instead.
+		if not entry.is_empty() and _launch(piece, entry["rect"], [entry["side"]], starts):
 			continue
 		# No room right next to the requested sides (e.g. the board sits just
 		# above the Resizer, closer than a piece is tall) -- still slide it
@@ -123,6 +128,9 @@ func launch_from_nearest_side(piece: ShapePiece, source: Control, origin: Contro
 			span = Rect2(o.position.x, s.position.y, o.size.x, s.size.y)
 		if _launch(piece, span, [side], []):
 			return
+	var entry := _entry_edge(o)
+	if not entry.is_empty() and _launch(piece, entry["rect"], [entry["side"]], []):
+		return
 	if not _launch_from_nearest_free(piece, o):
 		scatter([piece])
 
@@ -167,6 +175,53 @@ func _launch_from_nearest_free(piece: ShapePiece, source_rect: Rect2) -> bool:
 	var direction := away.rotated(deg_to_rad(randf_range(-LAUNCH_SPREAD_DEGREES, LAUNCH_SPREAD_DEGREES)))
 	TrayCollision.launch(piece, direction, piece.size.x * randf_range(LAUNCH_DISTANCE_MIN, LAUNCH_DISTANCE_MAX))
 	return true
+
+# For a source entirely outside the tray (the board and the playable items
+# each live in their own zone), a zero-thickness source rect just outside
+# the tray edge facing it, and the side to launch out of it -- so pieces
+# slide in through that edge as if they came straight from the source.
+# Narrowed to the source's own span along that edge when they overlap, so a
+# piece still enters level with where it came from. {} if the source
+# overlaps the tray.
+func _entry_edge(source: Rect2) -> Dictionary:
+	var bounds := _bounds()
+	if source.intersects(bounds):
+		return {}
+	# How far the source lies beyond each tray edge, keyed by the side that
+	# launches into the tray through that edge.
+	var distances := {
+		Side.RIGHT: bounds.position.x - source.end.x,
+		Side.LEFT: source.position.x - bounds.end.x,
+		Side.BOTTOM: bounds.position.y - source.end.y,
+		Side.TOP: source.position.y - bounds.end.y,
+	}
+	var side: Tray.Side = Side.RIGHT
+	for candidate in distances:
+		if distances[candidate] > distances[side]:
+			side = candidate
+	# Matches _find_launch_start()'s gap, so the start lands right on the
+	# edge -- minus half a pixel, so float rounding can't put it a hair out
+	# of bounds and get it rejected.
+	var gap: float = TrayCollision.WALL_PADDING + 2.0 - 0.5
+	var span: Vector2
+	var rect: Rect2
+	match side:
+		Side.RIGHT, Side.LEFT:
+			span = _overlap(source.position.y, source.end.y, 0.0, size.y)
+			var x: float = -gap if side == Side.RIGHT else size.x + gap
+			rect = Rect2(x, span.x, 0.0, span.y - span.x)
+		_:
+			span = _overlap(source.position.x, source.end.x, 0.0, size.x)
+			var y: float = -gap if side == Side.BOTTOM else size.y + gap
+			rect = Rect2(span.x, y, span.y - span.x, 0.0)
+	return {"rect": rect, "side": side}
+
+# The overlap of [a_start, a_end] and [b_start, b_end], or the whole of the
+# second range when they don't overlap.
+static func _overlap(a_start: float, a_end: float, b_start: float, b_end: float) -> Vector2:
+	var start := maxf(a_start, b_start)
+	var end := minf(a_end, b_end)
+	return Vector2(start, end) if start < end else Vector2(b_start, b_end)
 
 func _local_rect_of(control: Control) -> Rect2:
 	return get_global_transform().affine_inverse() * control.get_global_rect()

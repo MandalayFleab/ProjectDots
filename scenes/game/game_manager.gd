@@ -3,17 +3,11 @@ extends Control
 const ShapePieceScene := preload("res://scenes/shape_piece/shape_piece.tscn")
 
 enum State { SHOWING, PLAYING, WON }
+enum LayoutMode { AUTO, HORIZONTAL, VERTICAL }
 
-# UI chrome (Combiner, Divisor, Resizer, Replay button, the info labels) is scaled
-# from the SCREEN's own size, not from board.cell_size -- cell_size varies
-# round to round purely from the random row/column count LevelGenerator
-# picks (fewer cells means bigger individual cells for the same budget),
-# which has nothing to do with the device. Tying UI chrome to it made those
-# elements balloon or shrink on every replay independent of the screen,
-# causing exactly the kind of overlap a fixed-per-device size avoids: the
-# same screen always produces the same UI chrome size, no matter what board
-# that particular round happens to generate.
-const REFERENCE_SCREEN_MIN_DIMENSION := 648.0
+# After every layout pass -- lets the debug layout panel follow an automatic
+# switch between the horizontal and vertical distributions.
+signal layout_applied
 
 # How long the viewport must sit still before a live resize is treated as
 # "settled" and actually relaid out. Browsers fire resize continuously while
@@ -41,13 +35,21 @@ var elapsed_time: float = 0.0
 var level: LevelData
 var mistakes: int = 0
 
-# Uniform multiplier over every chrome size/margin in _layout_metrics(), on
-# top of the screen-based "s" scale -- lets the debug layout panel (F1,
-# debug builds only) test "what if the chrome took up more/less room" live,
-# separately from "what if the board itself were bigger/smaller"
-# (board.board_size_ratio). 0.75 is the value compared and picked via that
-# panel, alongside board_size_ratio = 1.0.
-var chrome_scale: float = 0.70
+# The two standard distributions (see LayoutConfig) -- which one applies
+# depends only on the screen's shape, and each is tuned separately, so the
+# same element can take a different proportion in each. Tuned live through
+# the debug layout panel (F1, debug builds only), whose "Copy values" button
+# prints these exact lines with the values picked there.
+var horizontal_layout := LayoutConfig.from_dict({"side_ratio": 0.15, "board_ratio": 0.50, "info_ratio": 0.40, "margin_ratio": 0.02, "board_fill": 1.00, "items_fill": 0.85, "info_text_scale": 1.00})
+var vertical_layout := LayoutConfig.from_dict({"side_ratio": 0.20, "board_ratio": 0.50, "info_ratio": 0.28, "margin_ratio": 0.02, "board_fill": 1.00, "items_fill": 0.85, "info_text_scale": 1.00})
+
+# Debug layout panel only: forces one distribution whatever the screen's
+# shape, so both can be tuned from the same window.
+var orientation_override: LayoutMode = LayoutMode.AUTO
+
+# Content rect of every zone ("info", "items", "board", "scramble") from the
+# last layout pass, margins already taken out.
+var zones: Dictionary = {}
 
 var _checking_solution: bool = false
 var _ready_for_resize: bool = false
@@ -55,6 +57,10 @@ var _resize_watch_active: bool = false
 var _last_resize_time: float = 0.0
 
 func _ready() -> void:
+	# The tray is placed over the scramble zone explicitly (see
+	# _place_tray()) -- its scene's full-rect anchors would otherwise keep
+	# stretching it back over the whole screen on every resize.
+	tray.set_anchors_preset(Control.PRESET_TOP_LEFT)
 	reveal_timer.timeout.connect(_on_reveal_timer_timeout)
 	replay_button.pressed.connect(_on_replay_pressed)
 	await _new_game()
@@ -88,13 +94,13 @@ func _watch_resize_settle() -> void:
 	_relayout_for_resize()
 
 # Public entry point for the debug layout panel (F1, debug builds only) --
-# forces an immediate reflow after the user drags a proportion slider,
+# forces an immediate reflow after the user changes a layout value,
 # reusing the exact same code path a live resize goes through.
 func apply_layout_now() -> void:
 	_relayout_for_resize()
 
 # Live counterpart to _new_game()'s layout pass: reflows the board, tray,
-# Combiner/Divisor and UI chrome to the new screen size in place, without
+# playable items and info zone to the new screen size in place, without
 # touching the level, locked cells, placed pieces, elapsed time or mistakes
 # -- a resize should never cost the player their progress.
 func _relayout_for_resize() -> void:
@@ -102,23 +108,18 @@ func _relayout_for_resize() -> void:
 		await get_tree().process_frame
 
 	var old_tray_size: Vector2 = tray.size
-	var safe_rect: Rect2 = _safe_board_rect()
-	var scale_factor: float = board.relayout(safe_rect.size)
-	board.position = safe_rect.position + (safe_rect.size - board.size) * 0.5
+	zones = _compute_zones()
+	var scale_factor: float = board.relayout(_board_budget())
+	_place_board()
 
-	tray.size = size
+	_place_tray()
 	tray.rescale(scale_factor, old_tray_size, tray.size)
+	_reset_tray_walls()
 
-	_apply_ui_scale()
+	_apply_zones()
 	combiner.rescale(scale_factor)
 	divisor.piece_size = board.cell_size * 0.8
-
-	tray.exclusion_rects = [
-		Rect2(board.position, board.size),
-		Rect2(combiner.position, combiner.size),
-		Rect2(divisor.position, divisor.size),
-		Rect2(resizer.position, resizer.size),
-	]
+	layout_applied.emit()
 
 func _new_game() -> void:
 	# Guards against a live-resize relayout racing an in-progress rebuild --
@@ -141,119 +142,175 @@ func _new_game() -> void:
 		await get_tree().process_frame
 
 	level = LevelGenerator.generate()
-	var safe_rect: Rect2 = _safe_board_rect()
-	board.build(level, tray, safe_rect.size)
+	zones = _compute_zones()
+	board.build(level, tray, _board_budget())
 	for cell in board.get_cells():
 		cell.piece_changed.connect(_on_piece_changed)
 	Selection.set_cells(board.get_cells())
 
-	board.position = safe_rect.position + (safe_rect.size - board.size) * 0.5
+	_place_board()
+	_place_tray()
+	_reset_tray_walls()
 	combiner.tray = tray
 	divisor.tray = tray
 	resizer.tray = tray
 	divisor.piece_size = board.cell_size * 0.8
-	_apply_ui_scale()
-	tray.exclusion_rects = [
-		Rect2(board.position, board.size),
-		Rect2(combiner.position, combiner.size),
-		Rect2(divisor.position, divisor.size),
-		Rect2(resizer.position, resizer.size),
-	]
+	_apply_zones()
 	_start_round()
 	_ready_for_resize = true
+	layout_applied.emit()
 
-# Single source of truth for every UI-chrome size, shared by _apply_ui_scale()
-# (which positions the chrome) and _safe_board_rect() (which carves out the
-# area the board is allowed to grow into). Keeping them derived from the same
-# numbers is the actual point -- the board must never be free to size itself
-# into a region the chrome already claims.
-func _layout_metrics() -> Dictionary:
-	var s: float = clampf(min(size.x, size.y) / REFERENCE_SCREEN_MIN_DIMENSION, 0.5, 2.0) * chrome_scale
-	return {
-		"s": s,
-		"margin": 20.0 * s,
-		"combiner_divisor_side": 160.0 * s,
-		"button_size": Vector2(120.0, 40.0) * s,
-		"chrono_size": Vector2(160.0, 32.0) * s,
-		"mistakes_size": Vector2(200.0, 32.0) * s,
-		"result_size": Vector2(400.0, 32.0) * s,
-	}
+func active_layout() -> LayoutConfig:
+	return vertical_layout if is_vertical_layout() else horizontal_layout
 
-# Scales and repositions every "playable item" and "informative item" that
-# isn't the board/pieces (Combiner, Divisor, Replay button, the chronometer/
-# mistakes/result labels). Deliberately based on the screen's own size, not
-# board.cell_size -- see the constant's comment above. Clamped so a tiny
-# phone doesn't shrink UI chrome into illegibility, and a huge monitor
-# doesn't balloon it into something cartoonish.
-func _apply_ui_scale() -> void:
-	var m: Dictionary = _layout_metrics()
-	var s: float = m["s"]
-	var margin: float = m["margin"]
+func is_vertical_layout() -> bool:
+	match orientation_override:
+		LayoutMode.HORIZONTAL:
+			return false
+		LayoutMode.VERTICAL:
+			return true
+	return size.y > size.x
 
-	var combiner_divisor_side: float = m["combiner_divisor_side"]
-	# Shifted up by the hold-charge bar's height (Divisor too, purely to stay
-	# visually level with Combiner) -- otherwise the bar, drawn just below
-	# Combiner's own square, would spill past the bottom of the screen.
-	var hold_bar_extra: float = combiner_divisor_side * (Combiner.HOLD_BAR_GAP_RATIO + Combiner.HOLD_BAR_HEIGHT_RATIO)
-	var bottom_row_y: float = size.y - margin - hold_bar_extra - combiner_divisor_side
-	combiner.size = Vector2(combiner_divisor_side, combiner_divisor_side)
-	combiner.position = Vector2(margin, bottom_row_y)
-	divisor.size = Vector2(combiner_divisor_side, combiner_divisor_side)
-	divisor.position = Vector2(size.x - margin - combiner_divisor_side, bottom_row_y)
-	# Resizer sits centred between them, on the same bottom row.
-	resizer.size = Vector2(combiner_divisor_side, combiner_divisor_side)
-	resizer.position = Vector2((size.x - combiner_divisor_side) * 0.5, bottom_row_y)
+# Splits the screen into the active distribution's four zones. Each zone is
+# carved out of the screen exclusively, so nothing (the board, the scattered
+# pieces, the chrome) can ever size itself into another one's room.
+func _compute_zones() -> Dictionary:
+	var config := active_layout()
+	var vertical := is_vertical_layout()
+	var margin: float = config.margin_ratio * minf(size.x, size.y)
+	var screen := _inset(Rect2(Vector2.ZERO, size), margin * 0.5)
+	var shares := [config.side_ratio, config.effective_board_ratio(), config.scramble_ratio()]
 
-	var button_size: Vector2 = m["button_size"]
-	replay_button.size = button_size
-	replay_button.position = Vector2(size.x - margin - button_size.x, margin)
-	replay_button.add_theme_font_size_override("font_size", maxi(int(20.0 * s), 10))
+	var result := {}
+	var side_band: Rect2
+	if vertical:
+		var bands := _cut(screen, true, [shares[1], shares[2], shares[0]])
+		result["board"] = bands[0]
+		result["scramble"] = bands[1]
+		side_band = bands[2]
+	else:
+		var bands := _cut(screen, false, [shares[0], shares[2], shares[1]])
+		side_band = bands[0]
+		result["scramble"] = bands[1]
+		result["board"] = bands[2]
+	# The side band splits along the other axis: info on top of the items
+	# when it's a column, to their left when it's a row.
+	var halves := _cut(side_band, not vertical, [config.info_ratio, 1.0 - config.info_ratio])
+	result["info"] = halves[0]
+	result["items"] = halves[1]
 
-	var chrono_size: Vector2 = m["chrono_size"]
-	chronometer_label.size = chrono_size
-	chronometer_label.position = Vector2(margin, margin)
-	chronometer_label.add_theme_font_size_override("font_size", maxi(int(28.0 * s), 12))
+	# Half a margin off every zone (plus the half already off the screen
+	# edge) leaves exactly one margin between any two neighbours.
+	for key in result:
+		result[key] = _inset(result[key], margin * 0.5)
+	return result
 
-	var mistakes_size: Vector2 = m["mistakes_size"]
-	mistakes_label.size = mistakes_size
-	mistakes_label.position = Vector2(margin, margin + chrono_size.y + 8.0 * s)
-	mistakes_label.add_theme_font_size_override("font_size", maxi(int(22.0 * s), 10))
+# Splits rect along X (or Y when vertical) into consecutive parts of the
+# given shares of its length.
+static func _cut(rect: Rect2, vertical: bool, shares: Array) -> Array[Rect2]:
+	var parts: Array[Rect2] = []
+	var length: float = rect.size.y if vertical else rect.size.x
+	var offset := 0.0
+	for share in shares:
+		var part: float = length * share
+		if vertical:
+			parts.append(Rect2(rect.position + Vector2(0.0, offset), Vector2(rect.size.x, part)))
+		else:
+			parts.append(Rect2(rect.position + Vector2(offset, 0.0), Vector2(part, rect.size.y)))
+		offset += part
+	return parts
 
-	var result_size: Vector2 = m["result_size"]
-	result_label.size = result_size
-	result_label.position = Vector2((size.x - result_size.x) * 0.5, margin)
-	result_label.add_theme_font_size_override("font_size", maxi(int(28.0 * s), 12))
+static func _inset(rect: Rect2, amount: float) -> Rect2:
+	var shrunk := rect.grow(-amount)
+	return Rect2(shrunk.position, shrunk.size.max(Vector2.ZERO))
 
-# The rectangle the board is allowed to grow into: the full screen minus a
-# top band (chronometer/mistakes/replay/result) and a bottom band (Combiner/
-# Divisor), each with their own margin on top of that. Board.build()/
-# relayout() treat this as "available space" instead of the raw screen --
-# handing them the whole screen (the previous approach) is exactly how the
-# board ended up overlapping the chrome on smaller or squarer screens, since
-# nothing stopped it from growing into the same corners the chrome occupies.
-func _safe_board_rect() -> Rect2:
-	var m: Dictionary = _layout_metrics()
-	var s: float = m["s"]
-	var margin: float = m["margin"]
-	var chrono_size: Vector2 = m["chrono_size"]
-	var mistakes_size: Vector2 = m["mistakes_size"]
+func _board_budget() -> Vector2:
+	return zones["board"].size * active_layout().board_fill
 
-	var top_block_height: float = max(chrono_size.y + 8.0 * s + mistakes_size.y, m["button_size"].y)
-	var top_reserved: float = margin + top_block_height + margin
+func _place_board() -> void:
+	var zone: Rect2 = zones["board"]
+	board.position = zone.position + (zone.size - board.size) * 0.5
 
-	# Combiner draws its hold-charge bar just below its own square (see
-	# combiner.gd) -- reserve room for that strip too, or it'd get clipped
-	# against (or overlap) the board/tray on a short screen.
-	var combiner_divisor_side: float = m["combiner_divisor_side"]
-	var hold_bar_extra: float = combiner_divisor_side * (Combiner.HOLD_BAR_GAP_RATIO + Combiner.HOLD_BAR_HEIGHT_RATIO)
-	var bottom_reserved: float = margin + combiner_divisor_side + hold_bar_extra + margin
+# The tray IS the scramble zone: loose pieces stay inside it, and pieces
+# coming out of the board or the playable items enter it through the edge
+# facing them (see Tray.launch_from()).
+func _place_tray() -> void:
+	var zone: Rect2 = zones["scramble"]
+	tray.position = zone.position
+	tray.size = zone.size
 
-	var rect_position := Vector2(margin, top_reserved)
-	var rect_size := Vector2(
-		max(size.x - margin * 2.0, 0.0),
-		max(size.y - top_reserved - bottom_reserved, 0.0)
-	)
-	return Rect2(rect_position, rect_size)
+# Nothing else lives inside the scramble zone anymore -- its own edges are
+# the only walls left. Reassigning also re-clamps every loose piece into the
+# (possibly resized) zone, so it must run after Tray.rescale().
+func _reset_tray_walls() -> void:
+	var no_walls: Array[Rect2] = []
+	tray.exclusion_rects = no_walls
+
+func _apply_zones() -> void:
+	var config := active_layout()
+	_apply_items(zones["items"], config)
+	_apply_info(zones["info"], config)
+	_apply_result(zones["scramble"], config)
+
+# Combiner, Resizer and Divisor share the playable items zone in equal
+# slots, laid along its longer side (a column in the horizontal distribution,
+# a row in the vertical one).
+func _apply_items(zone: Rect2, config: LayoutConfig) -> void:
+	var items: Array[Control] = [combiner, resizer, divisor]
+	var in_row: bool = zone.size.x >= zone.size.y
+	var slots := _cut(zone, not in_row, [1.0 / 3.0, 1.0 / 3.0, 1.0 / 3.0])
+	# Combiner draws its hold-charge bar just below its own square -- all
+	# three are sized and placed as if they had one, so they stay the same
+	# size and aligned with each other, and the bar never leaves the zone.
+	var height_factor: float = 1.0 + Combiner.HOLD_BAR_GAP_RATIO + Combiner.HOLD_BAR_HEIGHT_RATIO
+	var slot_size: Vector2 = slots[0].size
+	var side: float = minf(slot_size.x, slot_size.y / height_factor) * config.items_fill
+	for i in items.size():
+		items[i].size = Vector2(side, side)
+		items[i].position = slots[i].get_center() - Vector2(side, side * height_factor) * 0.5
+
+# Chronometer, mistakes and the Replay button, one row each, every font
+# fitted to its row (and to the zone's width) instead of a fixed size.
+func _apply_info(zone: Rect2, config: LayoutConfig) -> void:
+	var rows := _cut(zone, true, [1.0 / 3.0, 1.0 / 3.0, 1.0 / 3.0])
+	_fit_label(chronometer_label, rows[0], "00:00", 0.7, config.info_text_scale)
+	_fit_label(mistakes_label, rows[1], "Mistakes: 00", 0.5, config.info_text_scale)
+
+	var row: Rect2 = rows[2]
+	var font_size: int = _fit_font_size("Replay", row.size.x * 0.7, row.size.y * 0.45, config.info_text_scale)
+	replay_button.add_theme_font_size_override("font_size", font_size)
+	replay_button.size = Vector2(minf(row.size.x, font_size * 5.0), minf(row.size.y * 0.85, font_size * 2.0))
+	replay_button.position = row.get_center() - replay_button.size * 0.5
+
+# The scramble zone is empty once the round is won, so the result shows up
+# in its middle.
+func _apply_result(zone: Rect2, config: LayoutConfig) -> void:
+	var band_height: float = zone.size.y * 0.2
+	var band := Rect2(zone.position + Vector2(0.0, (zone.size.y - band_height) * 0.5), Vector2(zone.size.x, band_height))
+	_fit_label(result_label, band, "Solved in 00:00!", 0.7, config.info_text_scale)
+
+func _fit_label(label: Label, rect: Rect2, sample: String, height_share: float, text_scale: float) -> void:
+	label.add_theme_font_size_override("font_size", _fit_font_size(sample, rect.size.x * 0.95, rect.size.y * height_share, text_scale))
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	label.size = rect.size
+	label.position = rect.position
+
+# Largest font size at which `sample` fits both max_width and max_height,
+# then scaled by text_scale.
+func _fit_font_size(sample: String, max_width: float, max_height: float, text_scale: float) -> int:
+	var width_at_100: float = ThemeDB.fallback_font.get_string_size(sample, HORIZONTAL_ALIGNMENT_LEFT, -1, 100).x
+	var by_width: float = max_width / width_at_100 * 100.0 if width_at_100 > 0.0 else max_height
+	return maxi(int(minf(by_width, max_height) * text_scale), 8)
+
+# Drops in the gaps between zones (e.g. just outside the board, inside its
+# zone's margin) go to whichever cell is in range, same as the board's own
+# gaps -- the tray no longer covers the whole screen to catch them.
+func _can_drop_data(_at_position: Vector2, data: Variant) -> bool:
+	return data is ShapePiece and Selection.find_drop_target(data) != null
+
+func _drop_data(_at_position: Vector2, data: Variant) -> void:
+	Selection.drop_into_target(data)
 
 func _process(delta: float) -> void:
 	if state != State.PLAYING:
@@ -324,10 +381,6 @@ func _on_reveal_timer_timeout() -> void:
 		pieces.append(_make_scramble_piece(group, piece_size))
 
 	state = State.PLAYING
-	# Tray's size comes from anchors, not an explicit assignment like Board's --
-	# force it in sync with the root's (reliably measured) size right before
-	# scattering, instead of trusting anchor propagation already happened.
-	tray.size = size
 	tray.launch_from(pieces, board, Tray.ALL_SIDES)
 
 # One group from PieceDecomposer.random_disposition(): a single unit makes a
@@ -413,5 +466,4 @@ func _check_solution(open_cells: Array) -> void:
 		state = State.WON
 		result_label.text = "Solved in %s!" % chronometer_label.text
 	else:
-		tray.size = size
 		tray.launch_from(wrong_pieces, board, Tray.ALL_SIDES)

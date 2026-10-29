@@ -7,11 +7,6 @@ const BigCellScene := preload("res://scenes/big_cell/big_cell.tscn")
 const GAP_RATIO := 0.12
 const MIN_CELL_SIZE := 50.0
 
-# A var (not a const) so the in-editor debug layout panel (F1, debug builds
-# only) can tune it live while comparing proportions, instead of needing a
-# code edit + restart per value tried.
-var board_size_ratio: float = 1.0
-
 var cell_size: Vector2 = Vector2(100, 100)
 var gap: float = 12.0
 
@@ -34,11 +29,11 @@ func build(level: LevelData, tray: Tray, available_size: Vector2) -> void:
 	# happens to generate a smaller board (fewer cells to divide the same
 	# budget between) gets visibly bigger cells/pieces than one that
 	# generates a bigger board, even on the same screen with the same
-	# ratio. Using the worst case keeps cell (and therefore piece) size
+	# layout. Using the worst case keeps cell (and therefore piece) size
 	# constant across every round on a given device; a smaller board just
 	# ends up with some unused space around it instead.
 	var max_dimension: int = max(LevelGenerator.MAX_ROWS, LevelGenerator.MAX_COLUMNS)
-	var budget: float = min(available_size.x, available_size.y) * board_size_ratio
+	var budget: float = min(available_size.x, available_size.y)
 	var raw_cell: float = budget / (max_dimension + (max_dimension - 1) * GAP_RATIO)
 	raw_cell = max(raw_cell, MIN_CELL_SIZE)
 	cell_size = Vector2(raw_cell, raw_cell)
@@ -99,7 +94,7 @@ func relayout(available_size: Vector2) -> float:
 	# Same fixed-reference reasoning as build() above -- keeps a live resize
 	# consistent with the rest of this round's own sizing.
 	var max_dimension: int = max(LevelGenerator.MAX_ROWS, LevelGenerator.MAX_COLUMNS)
-	var budget: float = min(available_size.x, available_size.y) * board_size_ratio
+	var budget: float = min(available_size.x, available_size.y)
 	var raw_cell: float = budget / (max_dimension + (max_dimension - 1) * GAP_RATIO)
 	raw_cell = max(raw_cell, MIN_CELL_SIZE)
 

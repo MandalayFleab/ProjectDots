@@ -7,8 +7,8 @@ const CLICK_DISTANCE_THRESHOLD := 6.0
 const LONG_PRESS_SECONDS := 0.5
 
 # Proportions (of this node's own square size) for the hold-charge bar drawn
-# just below it -- game_manager._safe_board_rect() reserves room for these
-# too, so the bar never gets clipped or ends up overlapping the board/tray.
+# just below it -- game_manager._apply_items() reserves room for these too,
+# so the bar never leaves the playable items zone.
 const HOLD_BAR_GAP_RATIO := 0.08
 const HOLD_BAR_HEIGHT_RATIO := 0.12
 
