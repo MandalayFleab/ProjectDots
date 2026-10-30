@@ -12,6 +12,14 @@ const LONG_PRESS_SECONDS := 0.5
 const HOLD_BAR_GAP_RATIO := 0.08
 const HOLD_BAR_HEIGHT_RATIO := 0.12
 
+# Whenever a combine sends its result out into the tray -- lets HELP's
+# auto-play follow the piece it just made.
+signal produced(pieces: Array)
+# A player-visible use of the Combiner (Puzzle mode counts each as a move):
+# a second piece put in on top of a held one -- combined or not -- or a
+# long-press expel. The first piece going in isn't a use yet.
+signal used
+
 var tray: Tray = null
 var held_piece: ShapePiece = null
 
@@ -125,9 +133,14 @@ func _resolve(piece: ShapePiece, previous: ShapePiece) -> void:
 		# A big piece can't be combined any further, so it's expelled right
 		# away instead of sitting in the Combiner waiting for a long press.
 		tray.launch_from([combined], self, [Tray.Side.TOP])
+		produced.emit([combined])
+		used.emit()
 	else:
 		previous.cancel_animation()
 		tray.launch_from([previous], self, [Tray.Side.TOP])
+		# A second piece put in counts as trying the Combiner, whether or not
+		# the two actually combined.
+		used.emit()
 
 # A piece sitting inside the combiner needs PASS, not the default STOP --
 # STOP would swallow every tap before this panel's own _gui_input ever saw
@@ -182,9 +195,18 @@ func _watch_long_press(id: int) -> void:
 	_charge_progress = 0.0
 	queue_redraw()
 
-	if not completed or held_piece == null:
+	if not completed:
 		return
 	_press_active = false
+	if held_piece != null:
+		expel_held()
+		used.emit()
+
+# Sends whatever's held back out into the tray (the long-press expel, also
+# used by HELP's auto-play to clear the Combiner before using it).
+func expel_held() -> void:
+	if held_piece == null:
+		return
 	var piece := held_piece
 	piece.cancel_animation()
 	tray.launch_from([piece], self, [Tray.Side.TOP])

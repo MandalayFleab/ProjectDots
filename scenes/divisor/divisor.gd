@@ -4,6 +4,12 @@ class_name Divisor
 const ShapePieceScene := preload("res://scenes/shape_piece/shape_piece.tscn")
 const LABEL := "Divide"
 
+# Whenever a split sends its two halves out into the tray -- lets HELP's
+# auto-play follow them.
+signal produced(pieces: Array)
+# Every split (Puzzle mode counts each as a move).
+signal used
+
 var tray: Tray = null
 var piece_size: Vector2 = Vector2(80, 80)
 
@@ -56,6 +62,8 @@ func _split(piece: ShapePiece) -> void:
 	var p1 := _make_piece(spec_a)
 	var p2 := _make_piece(spec_b)
 	tray.launch_from([p1, p2], self, [Tray.Side.TOP])
+	produced.emit([p1, p2])
+	used.emit()
 
 func _make_piece(spec: PieceSpec) -> ShapePiece:
 	var p: ShapePiece = ShapePieceScene.instantiate()

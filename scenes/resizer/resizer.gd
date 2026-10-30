@@ -3,6 +3,12 @@ class_name Resizer
 
 const LABEL := "Resize"
 
+# Whenever a resized piece is sent back out into the tray -- lets HELP's
+# auto-play follow it.
+signal produced(pieces: Array)
+# Every resize (Puzzle mode counts each as a move).
+signal used
+
 var tray: Tray = null
 
 var _press_position: Vector2 = Vector2.ZERO
@@ -54,6 +60,8 @@ func place_piece(piece: ShapePiece, animate: bool = false) -> void:
 func _resize(piece: ShapePiece) -> void:
 	piece.toggle_size()
 	tray.launch_from([piece], self, [Tray.Side.TOP])
+	produced.emit([piece])
+	used.emit()
 
 func _gui_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:

@@ -80,7 +80,10 @@ func _drop_data(at_position: Vector2, data: Variant) -> void:
 	# Dropped just outside the board but in range of a (green) cell.
 	if Selection.drop_into_target(piece):
 		return
+	var from_cell := piece.get_parent() as BoardCell
 	_take_piece(piece, at_position - piece.size * 0.5)
+	if from_cell != null:
+		from_cell.report_dragged_out()
 
 # Slides pieces out of a source control (the board, Combiner, Divisor)
 # instead of popping them into place: each starts just outside a random

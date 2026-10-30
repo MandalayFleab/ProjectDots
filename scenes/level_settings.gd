@@ -22,6 +22,12 @@ var max_combined_color_shapes: int = 1
 # big cell already acting as the trap).
 var max_slack: int = 4
 var max_filled_big_cells: int = 4
+# How many times per round the HELP button can be used (Memory mode only).
+var help_uses: int = 1
+# Seconds added to the timer each time HELP is used: the base, plus the
+# second one for every combine, divide or resize it had to make first.
+var help_time_penalty: float = 15.0
+var help_move_time_penalty: float = 5.0
 
 static func from_dict(values: Dictionary) -> LevelSettings:
 	var settings := LevelSettings.new()

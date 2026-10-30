@@ -4,6 +4,11 @@ class_name BoardCell
 enum Highlight { NONE, CAN_ACCEPT, CANNOT_ACCEPT }
 
 signal piece_changed
+# Player-visible moves Puzzle mode counts: a piece put into this cell (by
+# drag or tap), and one sent out of it (long press, eviction by another
+# piece, or dragged out into the tray -- see report_dragged_out()).
+signal piece_placed
+signal piece_expelled
 
 var required_spec: PieceSpec = null
 var tray: Tray = null
@@ -179,6 +184,7 @@ func place_piece(piece: ShapePiece, animate: bool = false) -> void:
 	BoardCell.release_from_current_parent(piece)
 	if current_piece != null:
 		_expel(current_piece)
+	piece_placed.emit()
 	add_child(piece)
 	piece.visible = true
 	current_piece = piece
@@ -192,10 +198,16 @@ func place_piece(piece: ShapePiece, animate: bool = false) -> void:
 		piece.position = target
 		piece_changed.emit()
 
+# Called by Tray when the player drags this cell's piece out and drops it
+# loose in the tray -- the manual counterpart of _expel().
+func report_dragged_out() -> void:
+	piece_expelled.emit()
+
 # Slides the piece out of whichever board edge is nearest this cell (level
 # with the cell, not anywhere along that edge) -- shared by the long-press
 # expel and eviction-on-replace.
 func _expel(piece: ShapePiece) -> void:
+	piece_expelled.emit()
 	piece.cancel_animation()
 	piece.cancel_press()
 	if Selection.selected_piece == piece:

@@ -170,7 +170,21 @@ func _gui_input(event: InputEvent) -> void:
 			if cell != null:
 				cell.end_hold()
 			if event.position.distance_to(_press_position) < CLICK_DISTANCE_THRESHOLD:
-				Selection.select(self)
+				_on_tap(cell)
+
+# With another piece already selected, tapping a piece that sits in a cell
+# means "put the selected one here" -- the same as tapping the cell itself,
+# whose border is all that's left uncovered -- so the selected piece
+# replaces this one. Only when the cell can't take it (wrong size, already
+# tried there) does the tap fall back to selecting this piece instead.
+# Dragging this piece out, or long-pressing it, never reaches here (a drag
+# isn't a tap, and a long press cancels it -- see cancel_press()).
+func _on_tap(cell: BoardCell) -> void:
+	var other := Selection.selected_piece
+	if cell != null and other != null and other != self and cell.can_accept(other):
+		Selection.try_place_in(cell)
+		return
+	Selection.select(self)
 
 # Called when a long press expels this piece mid-press, so the release that
 # follows isn't also read as a tap that selects it.

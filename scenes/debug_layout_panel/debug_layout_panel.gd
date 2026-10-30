@@ -12,6 +12,7 @@ extends PanelContainer
 
 const COLOR_ZONES := {
 	"info": Color(0.35, 0.75, 1.0),
+	"menu": Color(0.75, 0.55, 1.0),
 	"items": Color(1.0, 0.75, 0.3),
 	"board": Color(0.45, 1.0, 0.5),
 	"scramble": Color(1.0, 0.45, 0.6),
@@ -21,12 +22,13 @@ const COLOR_ZONES := {
 const FIELD_SPECS := {
 	"side_ratio": [0.05, 0.5, 0.01, "Left column width", "Bottom row height", true],
 	"board_ratio": [0.2, 0.9, 0.01, "Board zone width", "Board zone height", true],
-	"info_ratio": [0.1, 0.9, 0.01, "Info height (of col)", "Info width (of row)", true],
+	"menu_ratio": [0.05, 0.6, 0.01, "Top row height (menu+info)", "Menu width (of row)", true],
+	"info_ratio": [0.0, 0.3, 0.01, "Info (vertical only)", "Info height (of board)", true],
 	"margin_ratio": [0.0, 0.08, 0.005, "Margin", "Margin", true],
 	"board_fill": [0.5, 1.0, 0.01, "Board fill", "Board fill", false],
 	"items_fill": [0.3, 1.0, 0.01, "Items fill", "Items fill", false],
-	"info_text_scale": [0.5, 2.0, 0.05, "Info text scale", "Info text scale", false],
-	"preview_ratio": [0.15, 0.8, 0.01, "Puzzle preview size", "Puzzle preview size", true],
+	"info_text_scale": [0.5, 2.0, 0.05, "Text scale", "Text scale", false],
+	"preview_ratio": [0.15, 0.7, 0.01, "Puzzle preview (of items)", "Puzzle preview (of items)", true],
 }
 
 @onready var vbox: VBoxContainer = $Scroll/Margin/VBox

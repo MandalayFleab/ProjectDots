@@ -6,13 +6,15 @@ class_name LayoutConfig
 # can take a different proportion of the screen in each one.
 #
 # The screen is split along a main axis (X when horizontal, Y when vertical)
-# into three bands: the side band (info + playable items), the board zone and
+# into three bands: the side band (menu + playable items), the board zone and
 # the scramble zone, which simply takes whatever is left. The side band is
-# then split along the other axis into the info zone and the playable items
-# zone.
+# then split along the other axis into the menu zone and the playable items
+# zone. The info zone (timer above counter, left-aligned) is a strip across
+# the top of the scramble zone when horizontal -- one top row with the menu,
+# at the same height -- and across the top of the board zone when vertical.
 #
-#   Horizontal:  [ info / items | scramble | board ]   (left to right)
-#   Vertical:    board, scramble, [ info | items ]     (top to bottom)
+#   Horizontal:  [ menu / items | info / scramble | board ]   (left to right)
+#   Vertical:    info / board, scramble, [ menu | items ]     (top to bottom)
 
 # Below this the scramble zone has no usable room left for the pieces --
 # board_ratio is capped so the three bands never add up past it.
@@ -21,6 +23,7 @@ const MIN_SCRAMBLE_RATIO := 0.05
 const FIELDS := [
 	"side_ratio",
 	"board_ratio",
+	"menu_ratio",
 	"info_ratio",
 	"margin_ratio",
 	"board_fill",
@@ -34,9 +37,13 @@ const FIELDS := [
 var side_ratio: float = 0.15
 # Share of the main axis taken by the board zone.
 var board_ratio: float = 0.50
-# Share of the side band taken by the info zone, along the other axis
-# (horizontal: top of the left column; vertical: left of the bottom row).
-var info_ratio: float = 0.40
+# Share of the side band taken by the menu zone, along the other axis
+# (horizontal: top of the left column, and the info zone's height too;
+# vertical: left of the bottom row).
+var menu_ratio: float = 0.15
+# Vertical only: share of the board zone's height taken by the info strip
+# across its top (horizontal uses menu_ratio for the info zone instead).
+var info_ratio: float = 0.08
 # Gap between zones (and around the screen edge), as a fraction of the
 # screen's smallest dimension.
 var margin_ratio: float = 0.02
@@ -44,10 +51,12 @@ var margin_ratio: float = 0.02
 var board_fill: float = 1.0
 # How much of its slot each playable item (Combiner/Resizer/Divisor) fills.
 var items_fill: float = 0.85
-# Multiplier over the info texts' auto-fitted font size.
+# Multiplier over the auto-fitted font size of every text (info, menu
+# buttons, result).
 var info_text_scale: float = 1.0
-# Puzzle mode's solution preview: the most it takes of the scramble zone's
-# shorter side (it sits in one of that zone's corners).
+# Puzzle mode's solution preview: its slot's share of the playable items
+# zone's length (the Combiner/Resizer/Divisor split the rest). Reserved in
+# every mode, left empty in Memory, so the items never move between modes.
 var preview_ratio: float = 0.35
 
 static func from_dict(values: Dictionary) -> LayoutConfig:

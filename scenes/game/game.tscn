@@ -36,7 +36,6 @@ anchors_preset = 0
 [node name="SolutionPreview" type="Control" parent="." unique_id=603533801]
 visible = false
 anchors_preset = 0
-mouse_filter = 2
 script = ExtResource("8")
 
 [node name="Combiner" parent="." unique_id=855323901 instance=ExtResource("4")]
@@ -104,6 +103,10 @@ text = "Replay"
 layout_mode = 0
 toggle_mode = true
 text = "Memory"
+
+[node name="HelpButton" type="Button" parent="." unique_id=1084313918]
+layout_mode = 0
+text = "HELP"
 
 [node name="MistakesLabel" type="Label" parent="." unique_id=1621344759]
 layout_mode = 0
