@@ -9,7 +9,7 @@ const MIXED_BIG_CHANCE := 0.5
 
 # Breaks a required piece down into the primary units it's made of: one for
 # a normal primary, two of that colour for a big primary, and one of each
-# component for a mixed colour (big or normal -- the Resizer only changes
+# component for a mixed colour (big or normal -- the ShapeShifter only changes
 # its size, never its units).
 static func to_units(spec: PieceSpec, big: bool) -> Array[PieceSpec]:
 	var units: Array[PieceSpec] = []
@@ -25,7 +25,7 @@ static func to_units(spec: PieceSpec, big: bool) -> Array[PieceSpec]:
 # of the same shape may be handed out as one piece instead -- a big primary
 # if they share a colour, otherwise their mixed colour at a random size.
 # This never adds or removes a unit, and every grouping stays solvable: the
-# Combiner, Divisor and Resizer between them can turn any grouping of the
+# ShapeShifter and Divisor between them can turn any grouping of the
 # same units into any other.
 #
 # Returns one entry per piece to create: {"units": Array[PieceSpec]} holding

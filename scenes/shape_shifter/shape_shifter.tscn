@@ -1,0 +1,10 @@
+[gd_scene format=3]
+
+[ext_resource type="Script" path="res://scenes/shape_shifter/shape_shifter.gd" id="1"]
+
+[sub_resource type="StyleBoxEmpty" id="1"]
+
+[node name="ShapeShifter" type="Panel"]
+size = Vector2(160, 160)
+theme_override_styles/panel = SubResource("1")
+script = ExtResource("1")

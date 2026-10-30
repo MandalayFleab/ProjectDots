@@ -48,7 +48,7 @@ func setup_single(spec: PieceSpec, unit_size: Vector2) -> void:
 # Divisor can split it back. The same primary twice gives a big piece of
 # that colour; two different primaries give their mix, which -- unlike a
 # primary -- may be either size, since its two units are accounted for
-# either way (see Resizer).
+# either way (see ShapeShifter).
 func setup_pair(a: PieceSpec, b: PieceSpec, big: bool, unit_size: Vector2) -> void:
 	shape_type = a.shape_type
 	color = Shapes.mix(a.color, b.color)
@@ -57,7 +57,7 @@ func setup_pair(a: PieceSpec, b: PieceSpec, big: bool, unit_size: Vector2) -> vo
 	is_big = big
 	size = unit_size * 2.0 if big else unit_size
 
-# Resizer only: flips a mixed-colour piece between normal and big.
+# ShapeShifter only: flips a mixed-colour piece between normal and big.
 func toggle_size() -> void:
 	is_big = not is_big
 	size = size * 2.0 if is_big else size * 0.5
@@ -105,11 +105,11 @@ func _leave_moving_group() -> void:
 func _get_drag_data(_at_position: Vector2) -> Variant:
 	if locked:
 		return null
-	# Once inside the Combiner, a piece only leaves through its long-press
+	# Once held in the ShapeShifter, a piece only leaves through its long-press
 	# expel (or by being combined). Returning null here lets the drag attempt
-	# fall through to the Combiner (this piece's mouse filter is PASS), which
+	# fall through to the ShapeShifter (this piece's mouse filter is PASS), which
 	# doesn't offer one either.
-	if get_parent() is Combiner:
+	if get_parent() is ShapeShifter:
 		return null
 	if Selection.selected_piece == self:
 		Selection.deselect()
@@ -148,16 +148,16 @@ func _notification(what: int) -> void:
 func _gui_input(event: InputEvent) -> void:
 	if locked:
 		return
-	# While sitting inside the Combiner, this piece's own hitbox would
-	# otherwise swallow every tap meant for the Combiner itself (its mouse
+	# While held in the ShapeShifter, this piece's own hitbox would
+	# otherwise swallow every tap meant for the ShapeShifter itself (its mouse
 	# filter is PASS specifically so taps still reach it after this returns
-	# -- see Combiner._hold()). Dragging it out is blocked separately, in
+	# -- see ShapeShifter._hold()). Dragging it out is blocked separately, in
 	# _get_drag_data().
-	if get_parent() is Combiner:
+	if get_parent() is ShapeShifter:
 		return
 	# A piece sitting in a cell covers most of it, so presses on the piece
 	# also drive the cell's long-press expel (this piece stays STOP, unlike in
-	# the Combiner, so its own tap-to-select keeps working alongside).
+	# the ShapeShifter, so its own tap-to-select keeps working alongside).
 	var cell := get_parent() as BoardCell
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
 		if event.pressed:

@@ -23,11 +23,13 @@ const RESIZE_SETTLE_SECONDS := 0.3
 # up, before the pieces are scrambled out of the board.
 const PREVIEW_SHRINK_SECONDS := 0.4
 
-# Placeholders in front of the info zone's texts -- any text works, emojis
-# included (drawn with the system's emoji font).
-const TIMER_ICON := "⏱️"
-const MISTAKES_ICON := "❌"
-const MOVES_ICON := "↔️"
+# Placeholders in front of the info zone's texts. Only characters the
+# built-in font has (e.g. × # • ∞), so they look the same on every platform
+# -- emojis come from the system's own font, which a web export (Chrome)
+# doesn't have.
+const TIMER_ICON := "T"
+const MISTAKES_ICON := "×"
+const MOVES_ICON := "#"
 
 # The "+15" that pops up under the timer when HELP adds its time penalty:
 # starts green at PENALTY_FONT_RATIO of the timer's font size, and floats up
@@ -40,16 +42,15 @@ const PENALTY_FLOAT_SECONDS := 2.0
 
 # The pause between HELP's auto-play moves, so each one reads on its own.
 const HELP_STEP_PAUSE := 0.15
-# Longest an auto-play step waits for the Combiner/Divisor/Resizer to send
+# Longest an auto-play step waits for the ShapeShifter/Divisor to send
 # its result back before giving up -- input is off during the auto-play, so
 # a step that never finished must never leave the game stuck.
 const HELP_STEP_TIMEOUT := 3.0
 
 @onready var board: Board = $Board
 @onready var tray: Tray = $Tray
-@onready var combiner: Combiner = $Combiner
+@onready var shifter: ShapeShifter = $ShapeShifter
 @onready var divisor: Divisor = $Divisor
-@onready var resizer: Resizer = $Resizer
 @onready var reveal_timer: Timer = $RevealTimer
 @onready var chronometer_label: Label = $ChronometerLabel
 @onready var result_label: Label = $ResultLabel
@@ -67,7 +68,7 @@ var mistakes: int = 0
 var moves: int = 0
 var game_mode: GameMode = GameMode.MEMORY
 var help_uses_left: int = 0
-# Combiner/Divisor/Resizer uses the current HELP auto-play has made so far
+# ShapeShifter/Divisor uses the current HELP auto-play has made so far
 # (each one adds help_move_time_penalty).
 var _help_moves: int = 0
 var _help_penalty_applied: bool = false
@@ -83,7 +84,7 @@ var puzzle_settings := LevelSettings.from_dict({"min_rows": 4, "max_rows": 6, "m
 # the debug layout panel (F1, debug builds only), whose "Copy values" button
 # prints these exact lines with the values picked there.
 var horizontal_layout := LayoutConfig.from_dict({"side_ratio": 0.15, "board_ratio": 0.50, "menu_ratio": 0.15, "info_ratio": 0.08, "margin_ratio": 0.00, "board_fill": 1.00, "items_fill": 0.95, "info_text_scale": 1.00, "preview_ratio": 0.30})
-var vertical_layout := LayoutConfig.from_dict({"side_ratio": 0.20, "board_ratio": 0.50, "menu_ratio": 0.20, "info_ratio": 0.08, "margin_ratio": 0.00, "board_fill": 1.00, "items_fill": 1.00, "info_text_scale": 1.00, "preview_ratio": 0.30})
+var vertical_layout := LayoutConfig.from_dict({"side_ratio": 0.18, "board_ratio": 0.45, "menu_ratio": 0.45, "info_ratio": 0.25, "margin_ratio": 0.00, "board_fill": 1.00, "items_fill": 1.00, "info_text_scale": 1.00, "preview_ratio": 0.30})
 
 # Debug layout panel only: forces one distribution whatever the screen's
 # shape, so both can be tuned from the same window.
@@ -107,7 +108,7 @@ func _ready() -> void:
 	replay_button.pressed.connect(_on_replay_pressed)
 	mode_button.toggled.connect(_on_mode_toggled)
 	help_button.pressed.connect(_on_help_pressed)
-	for item in [combiner, divisor, resizer]:
+	for item in [shifter, divisor]:
 		item.used.connect(_count_move)
 	_update_mode_button()
 	await _new_game()
@@ -177,7 +178,7 @@ func _relayout_for_resize() -> void:
 
 	_apply_zones()
 	_reset_tray_walls()
-	combiner.rescale(scale_factor)
+	shifter.rescale(scale_factor)
 	divisor.piece_size = board.cell_size * 0.8
 	layout_applied.emit()
 
@@ -189,7 +190,7 @@ func _new_game() -> void:
 	Selection.deselect()
 	Selection.set_cells([])
 	tray.clear()
-	combiner.clear()
+	shifter.clear()
 	result_label.text = ""
 	mistakes = 0
 	moves = 0
@@ -217,9 +218,8 @@ func _new_game() -> void:
 
 	_place_board()
 	_place_tray()
-	combiner.tray = tray
+	shifter.tray = tray
 	divisor.tray = tray
-	resizer.tray = tray
 	divisor.piece_size = board.cell_size * 0.8
 	_apply_zones()
 	_reset_tray_walls()
@@ -255,10 +255,6 @@ func _compute_zones() -> Dictionary:
 		result["board"] = bands[0]
 		result["scramble"] = bands[1]
 		side_band = bands[2]
-		# The info strip runs across the top of the board zone.
-		var board_parts := _cut(result["board"], true, [config.info_ratio, 1.0 - config.info_ratio])
-		result["info"] = board_parts[0]
-		result["board"] = board_parts[1]
 	else:
 		var bands := _cut(screen, false, [shares[0], shares[2], shares[1]])
 		side_band = bands[0]
@@ -270,11 +266,19 @@ func _compute_zones() -> Dictionary:
 		var scramble_parts := _cut(result["scramble"], true, [config.menu_ratio, 1.0 - config.menu_ratio])
 		result["info"] = scramble_parts[0]
 		result["scramble"] = scramble_parts[1]
-	# The side band splits along the other axis: menu on top of the items
-	# when it's a column, to their left when it's a row.
-	var halves := _cut(side_band, not vertical, [config.menu_ratio, 1.0 - config.menu_ratio])
-	result["menu"] = halves[0]
-	result["items"] = halves[1]
+	if vertical:
+		# The bottom band: the items across its full width, over a last row
+		# with the menu on the left and the info on the right.
+		var rows := _cut(side_band, true, [1.0 - config.info_ratio, config.info_ratio])
+		result["items"] = rows[0]
+		var row_parts := _cut(rows[1], false, [config.menu_ratio, 1.0 - config.menu_ratio])
+		result["menu"] = row_parts[0]
+		result["info"] = row_parts[1]
+	else:
+		# The left column: the menu on top of the items.
+		var halves := _cut(side_band, true, [config.menu_ratio, 1.0 - config.menu_ratio])
+		result["menu"] = halves[0]
+		result["items"] = halves[1]
 
 	# Half a margin off every zone (plus the half already off the screen
 	# edge) leaves exactly one margin between any two neighbours.
@@ -330,14 +334,14 @@ func _apply_zones() -> void:
 	_apply_info(zones["info"], config)
 	_apply_result(zones["scramble"], config)
 
-# Combiner, Resizer and Divisor share the playable items zone in equal
+# The ShapeShifter and Divisor share the playable items zone in equal
 # slots, laid along its longer side (a column in the horizontal distribution,
 # a row in the vertical one). Puzzle mode's solution preview goes first in
 # that same line (top of the column, left of the row), in its own slot taking
 # preview_ratio of the zone's length. The slot is reserved in every mode (just
 # empty in Memory), so the items keep the same size and position in both.
 func _apply_items(zone: Rect2, config: LayoutConfig) -> void:
-	var items: Array[Control] = [combiner, resizer, divisor]
+	var items: Array[Control] = [shifter, divisor]
 	var in_row: bool = zone.size.x >= zone.size.y
 	var parts := _cut(zone, not in_row, [config.preview_ratio, 1.0 - config.preview_ratio])
 	var preview_slot: Rect2 = parts[0]
@@ -349,31 +353,40 @@ func _apply_items(zone: Rect2, config: LayoutConfig) -> void:
 	help_button.add_theme_font_size_override("font_size", _fit_font_size("HELP", preview_side * 0.6, preview_side * 0.3, config.info_text_scale))
 	help_button.size = preview_rect.size
 	help_button.position = preview_rect.position
-	var slots := _cut(parts[1], not in_row, [1.0 / 3.0, 1.0 / 3.0, 1.0 / 3.0])
-	# Combiner draws its hold-charge bar just below its own square -- all
-	# three are sized and placed as if they had one, so they stay the same
+	var shares: Array = []
+	for item in items:
+		shares.append(1.0 / items.size())
+	var slots := _cut(parts[1], not in_row, shares)
+	# The ShapeShifter draws its hold-charge bar just below its own square --
+	# all items are sized and placed as if they had one, so they stay the same
 	# size and aligned with each other, and the bar never leaves the zone.
-	var height_factor: float = 1.0 + Combiner.HOLD_BAR_GAP_RATIO + Combiner.HOLD_BAR_HEIGHT_RATIO
+	var height_factor: float = 1.0 + ShapeShifter.HOLD_BAR_GAP_RATIO + ShapeShifter.HOLD_BAR_HEIGHT_RATIO
 	var slot_size: Vector2 = slots[0].size
 	var side: float = minf(slot_size.x, slot_size.y / height_factor) * config.items_fill
 	for i in items.size():
 		items[i].size = Vector2(side, side)
 		items[i].position = slots[i].get_center() - Vector2(side, side * height_factor) * 0.5
 
-# The mode switch above the Replay button, one row each. Both are fitted
+# The mode switch above the Replay button, one row each -- side by side in
+# the vertical distribution, to keep its last row short. Both are fitted
 # from the same (longest) sample, so they come out the same size whatever
 # the mode button currently says.
 func _apply_menu(zone: Rect2, config: LayoutConfig) -> void:
-	var rows := _cut(zone, true, [0.5, 0.5])
+	var rows := _cut(zone, not is_vertical_layout(), [0.5, 0.5])
 	_fit_button(mode_button, rows[0], config.info_text_scale)
 	_fit_button(replay_button, rows[1], config.info_text_scale)
 
-# The timer above the counter, both left-aligned in the info zone, with one
-# font size fitted so both always fit its width and their row's height.
+# The timer above the counter, both left-aligned in the info zone -- or,
+# in the vertical distribution, side by side on one line (the counter just
+# after the timer) centered in the zone, to keep its last row short. One font size is fitted so
+# both always fit.
 func _apply_info(zone: Rect2, config: LayoutConfig) -> void:
-	var rows := _cut(zone, true, [0.5, 0.5])
 	var timer_sample: String = _timer_text(0)
 	var counter_sample: String = "%s 000" % MISTAKES_ICON
+	if is_vertical_layout():
+		_apply_info_in_line(zone, config, timer_sample, counter_sample)
+		return
+	var rows := _cut(zone, true, [0.5, 0.5])
 	var widest: String = timer_sample if _text_width(timer_sample) >= _text_width(counter_sample) else counter_sample
 	var font_size: int = _fit_font_size(widest, zone.size.x, rows[0].size.y * 0.7, config.info_text_scale)
 	for i in 2:
@@ -383,6 +396,23 @@ func _apply_info(zone: Rect2, config: LayoutConfig) -> void:
 		label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 		label.size = rows[i].size
 		label.position = rows[i].position
+
+func _apply_info_in_line(zone: Rect2, config: LayoutConfig, timer_sample: String, counter_sample: String) -> void:
+	# A one-font-size gap (the "  ") between the two.
+	var font_size: int = _fit_font_size(timer_sample + "  " + counter_sample, zone.size.x, zone.size.y * 0.7, config.info_text_scale)
+	var timer_width: float = _text_width(timer_sample) * font_size / 100.0
+	var counter_width: float = _text_width(counter_sample) * font_size / 100.0
+	for label in [chronometer_label, mistakes_label]:
+		label.add_theme_font_size_override("font_size", font_size)
+		label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+		label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	# The pair is centered as a whole, measured from the samples (not the
+	# live texts) so it doesn't shift as the counter's digits change.
+	var left: float = zone.position.x + maxf(zone.size.x - (timer_width + font_size + counter_width), 0.0) * 0.5
+	chronometer_label.size = Vector2(timer_width, zone.size.y)
+	chronometer_label.position = Vector2(left, zone.position.y)
+	mistakes_label.size = Vector2(counter_width, zone.size.y)
+	mistakes_label.position = Vector2(left + timer_width + font_size, zone.position.y)
 
 static func _text_width(text: String) -> float:
 	return ThemeDB.fallback_font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, 100).x
@@ -423,8 +453,8 @@ func _can_drop_data(_at_position: Vector2, data: Variant) -> bool:
 func _drop_data(_at_position: Vector2, data: Variant) -> void:
 	Selection.drop_into_target(data)
 
-# Puzzle mode counts moves instead of mistakes: every Combiner combine or
-# long-press expel, Divisor split, Resizer use, piece put into a cell, and
+# Puzzle mode counts moves instead of mistakes: every ShapeShifter combine,
+# resize or long-press expel, Divisor split, piece put into a cell, and
 # piece sent out of one (long press, eviction, or dragged out). Memory mode
 # only counts mistakes.
 func _count_move() -> void:
@@ -532,7 +562,7 @@ func _update_help_button() -> void:
 
 # Memory mode's HELP: plays one still-unsolved shape into its cell for the
 # player, at the cost of a use and a time penalty: help_time_penalty, plus
-# help_move_time_penalty for every Combiner/Divisor/Resizer use it took (see
+# help_move_time_penalty for every ShapeShifter/Divisor use it took (see
 # _help_plan()). Applied right before the final drag into the cell (see
 # _help_move()), so it always matches the moves actually made, and still
 # lands before that drag can win the round and stop the timer. When nothing
@@ -581,6 +611,8 @@ func _show_time_penalty(seconds: float) -> void:
 	var timer_font_size: int = chronometer_label.get_theme_font_size("font_size")
 	var timer_width: float = ThemeDB.fallback_font.get_string_size(chronometer_label.text, HORIZONTAL_ALIGNMENT_LEFT, -1, timer_font_size).x
 	var start := Vector2(chronometer_label.position.x + timer_width + timer_font_size * 0.3, chronometer_label.position.y + chronometer_label.size.y * 0.8)
+	# Kept on screen when the timer sits at its bottom edge (vertical).
+	start.y = minf(start.y, size.y - label.size.y)
 	label.position = start
 	# Shrinks toward its own center.
 	label.pivot_offset = label.size * 0.5
@@ -598,16 +630,16 @@ func _show_time_penalty(seconds: float) -> void:
 #
 # Prefers cells with an exactly matching piece available -- loose in the
 # scramble zone, sitting in some other cell it doesn't solve, or held by the
-# Combiner -- which simply travels into the cell ("exact"). Otherwise picks
+# ShapeShifter -- which simply travels into the cell ("exact"). Otherwise picks
 # the fewest pieces that hold the units the cell needs, which _help_build()
-# then runs through the Divisor/Combiner/Resizer exactly as a player would.
+# then runs through the Divisor/ShapeShifter exactly as a player would.
 func _help_plan() -> Dictionary:
 	var pieces: Array = tray.get_children().filter(func(c): return c is ShapePiece and c.visible)
 	for cell in board.get_cells():
 		if not cell.locked and cell.current_piece != null and not cell.is_solved():
 			pieces.append(cell.current_piece)
-	if combiner.held_piece != null:
-		pieces.append(combiner.held_piece)
+	if shifter.held_piece != null:
+		pieces.append(shifter.held_piece)
 	pieces = pieces.filter(func(p): return not p.is_in_group(ShapePiece.MOVING_GROUP))
 
 	var exact := {}
@@ -641,7 +673,7 @@ func _help_move(piece: ShapePiece, cell: BoardCell) -> void:
 	cell.place_piece(piece, true)
 	await get_tree().create_timer(Selection.MOVE_DURATION + HELP_STEP_PAUSE).timeout
 
-# Drags a piece into the Combiner, Divisor or Resizer and returns what comes
+# Drags a piece into the ShapeShifter or Divisor and returns what comes
 # back out into the tray -- [] if nothing did within HELP_STEP_TIMEOUT.
 func _help_use_item(item: Control, piece: ShapePiece) -> Array:
 	if Selection.selected_piece == piece:
@@ -659,41 +691,42 @@ func _help_use_item(item: Control, piece: ShapePiece) -> Array:
 	await get_tree().create_timer(HELP_STEP_PAUSE).timeout
 	return result
 
-# Drags two single units into the Combiner, one after the other, and returns
+# Drags two single units into the ShapeShifter, one after the other, and returns
 # the (always big) piece it makes, or null if it never came out. Clears out
 # anything else the player left in there first, so it doesn't get combined
 # (or swapped) with ours.
 func _help_combine(a: ShapePiece, b: ShapePiece) -> ShapePiece:
-	if combiner.held_piece == b:
+	if shifter.held_piece == b:
 		var swap := a
 		a = b
 		b = swap
-	if combiner.held_piece != null and combiner.held_piece != a:
-		combiner.expel_held()
+	if shifter.held_piece != null and shifter.held_piece != a:
+		shifter.expel_held()
 		await get_tree().create_timer(HELP_STEP_PAUSE).timeout
-	if combiner.held_piece != a:
+	if shifter.held_piece != a:
 		if Selection.selected_piece == a:
 			Selection.deselect()
-		combiner.place_piece(a, true)
+		shifter.place_piece(a, true)
 		await get_tree().create_timer(Selection.MOVE_DURATION + HELP_STEP_PAUSE).timeout
-	var result: Array = await _help_use_item(combiner, b)
+	var result: Array = await _help_use_item(shifter, b)
 	return null if result.is_empty() else result[0]
 
 # Builds the cell's piece out of `sources` the way a player would, one
 # visible move at a time, then drags it into the cell:
 #   1. A source holding exactly the cell's units, just at the other size (a
-#      mixed colour), goes through the Resizer.
+#      mixed colour), goes through the ShapeShifter to switch size.
 #   2. Otherwise every two-unit source goes through the Divisor first, and
 #      only the halves the cell needs are kept (the rest stay in the tray).
-#   3. Two needed units go through the Combiner -- and, if the cell wants a
-#      normal-size mixed colour, the (always big) result through the Resizer.
+#   3. Two needed units are combined in the ShapeShifter -- and, if the cell
+#      wants a normal-size mixed colour, the (always big) result goes back in
+#      to shrink.
 # Stops wherever a step times out (see _help_use_item()); whatever was made
 # so far just stays in the tray.
 func _help_build(cell: BoardCell, sources: Array) -> void:
 	var needed := PieceDecomposer.to_units(cell.required_spec, cell.expects_big())
 	var exact_units = _subtract_units(_units_of(sources[0]), needed)
 	if sources.size() == 1 and exact_units != null and exact_units.is_empty():
-		var resized: Array = await _help_use_item(resizer, sources[0])
+		var resized: Array = await _help_use_item(shifter, sources[0])
 		if not resized.is_empty():
 			await _help_move(resized[0], cell)
 		return
@@ -720,7 +753,7 @@ func _help_build(cell: BoardCell, sources: Array) -> void:
 		if result == null:
 			return
 		if not cell.expects_big():
-			var resized: Array = await _help_use_item(resizer, result)
+			var resized: Array = await _help_use_item(shifter, result)
 			if resized.is_empty():
 				return
 			result = resized[0]
@@ -766,7 +799,7 @@ func _build_sources(needed: Array[PieceSpec], pieces: Array) -> Array:
 
 # One group from PieceDecomposer.random_disposition(): a single unit makes a
 # normal primary piece, a pair goes through the same setup_pair() the
-# Combiner uses, so the Divisor/Resizer treat it exactly like one of theirs.
+# ShapeShifter uses, so the Divisor/ShapeShifter treat it exactly like one of theirs.
 func _make_scramble_piece(group: Dictionary, piece_size: Vector2) -> ShapePiece:
 	var units: Array = group["units"]
 	var piece := ShapePieceScene.instantiate() as ShapePiece
@@ -782,9 +815,9 @@ func _on_piece_changed() -> void:
 	# Intentionally-empty cells are correctly solved by staying empty, so
 	# "every open cell is full" is no longer a valid readiness check -- check
 	# once every scattered piece has been placed SOMEWHERE instead. A piece
-	# sitting unplaced in the Combiner isn't in the tray either, but it also
+	# sitting unplaced in the ShapeShifter isn't in the tray either, but it also
 	# isn't resolving anything, so it must block readiness too.
-	if tray.get_child_count() > 0 or combiner.held_piece != null:
+	if tray.get_child_count() > 0 or shifter.held_piece != null:
 		return
 	# A check already in progress is mid-shrink -- a late placement callback
 	# (e.g. an earlier animated move landing now) must not count mistakes twice.

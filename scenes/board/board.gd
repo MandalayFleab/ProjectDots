@@ -86,7 +86,7 @@ func _drop_data(_at_position: Vector2, data: Variant) -> void:
 # resizes live mid-round, so the player's progress is never thrown away just
 # because the window changed size. Returns the scale factor applied (1.0 if
 # the change was negligible and nothing moved), so callers can rescale
-# pieces elsewhere (tray, combiner) by the same amount.
+# pieces elsewhere (tray, shape shifter) by the same amount.
 func relayout(available_size: Vector2) -> float:
 	if _level == null:
 		return 1.0

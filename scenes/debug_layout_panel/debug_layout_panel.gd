@@ -9,6 +9,10 @@ extends PanelContainer
 # picks one regardless of the window's shape, so both can be tuned from the
 # same window; "Copy values" puts the code for both on the clipboard (and
 # prints it) to paste back over the defaults in game_manager.gd.
+#
+# F2 (panel open or not) rotates the window -- swaps its width and height,
+# like turning a phone -- so Auto flips between the two distributions at
+# their real proportions.
 
 const COLOR_ZONES := {
 	"info": Color(0.35, 0.75, 1.0),
@@ -22,8 +26,8 @@ const COLOR_ZONES := {
 const FIELD_SPECS := {
 	"side_ratio": [0.05, 0.5, 0.01, "Left column width", "Bottom row height", true],
 	"board_ratio": [0.2, 0.9, 0.01, "Board zone width", "Board zone height", true],
-	"menu_ratio": [0.05, 0.6, 0.01, "Top row height (menu+info)", "Menu width (of row)", true],
-	"info_ratio": [0.0, 0.3, 0.01, "Info (vertical only)", "Info height (of board)", true],
+	"menu_ratio": [0.05, 0.6, 0.01, "Top row height (menu+info)", "Menu width (of last row)", true],
+	"info_ratio": [0.1, 0.9, 0.01, "Info (vertical only)", "Menu+info row height (of band)", true],
 	"margin_ratio": [0.0, 0.08, 0.005, "Margin", "Margin", true],
 	"board_fill": [0.5, 1.0, 0.01, "Board fill", "Board fill", false],
 	"items_fill": [0.3, 1.0, 0.01, "Items fill", "Items fill", false],
@@ -80,9 +84,24 @@ func _unhandled_key_input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and event.keycode == KEY_F1:
 		visible = not visible
 		get_viewport().set_input_as_handled()
+	elif event is InputEventKey and event.pressed and event.keycode == KEY_F2:
+		_rotate_window()
+		get_viewport().set_input_as_handled()
+
+# Swaps the window's width and height, scaled down if needed to fit the
+# screen, and re-centered on it.
+func _rotate_window() -> void:
+	var window: Window = get_window()
+	if window.mode != Window.MODE_WINDOWED:
+		window.mode = Window.MODE_WINDOWED
+	var rotated := Vector2(window.size.y, window.size.x)
+	var screen: Rect2i = DisplayServer.screen_get_usable_rect(window.current_screen)
+	var fit: float = minf(1.0, minf(screen.size.x * 0.95 / rotated.x, screen.size.y * 0.95 / rotated.y))
+	window.size = Vector2i(rotated * fit)
+	window.position = screen.position + (screen.size - window.size) / 2
 
 func _build_rows() -> void:
-	_add_label("Layout tuning (F1 to hide)")
+	_add_label("Layout tuning (F1 to hide, F2 to rotate)")
 	_status_label = _add_label("")
 
 	var orientation_row := _add_row("Force")

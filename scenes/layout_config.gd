@@ -11,10 +11,11 @@ class_name LayoutConfig
 # then split along the other axis into the menu zone and the playable items
 # zone. The info zone (timer above counter, left-aligned) is a strip across
 # the top of the scramble zone when horizontal -- one top row with the menu,
-# at the same height -- and across the top of the board zone when vertical.
+# at the same height. When vertical, the bottom band is the items across its
+# full width over a last row with the menu and the info side by side.
 #
 #   Horizontal:  [ menu / items | info / scramble | board ]   (left to right)
-#   Vertical:    info / board, scramble, [ menu | items ]     (top to bottom)
+#   Vertical:    board, scramble, items, [ menu | info ]      (top to bottom)
 
 # Below this the scramble zone has no usable room left for the pieces --
 # board_ratio is capped so the three bands never add up past it.
@@ -33,29 +34,29 @@ const FIELDS := [
 ]
 
 # Share of the main axis taken by the side band (horizontal: left column
-# width; vertical: bottom row height).
+# width; vertical: bottom band height, items + menu/info row).
 var side_ratio: float = 0.15
 # Share of the main axis taken by the board zone.
 var board_ratio: float = 0.50
-# Share of the side band taken by the menu zone, along the other axis
-# (horizontal: top of the left column, and the info zone's height too;
-# vertical: left of the bottom row).
+# Horizontal: share of the left column's height taken by the menu zone (the
+# info zone's height too). Vertical: share of the last row's width taken by
+# the menu zone (the info zone gets the rest).
 var menu_ratio: float = 0.15
-# Vertical only: share of the board zone's height taken by the info strip
-# across its top (horizontal uses menu_ratio for the info zone instead).
+# Vertical only: share of the bottom band's height taken by its last row
+# (menu + info), below the items.
 var info_ratio: float = 0.08
 # Gap between zones (and around the screen edge), as a fraction of the
 # screen's smallest dimension.
 var margin_ratio: float = 0.02
 # How much of the board zone the biggest possible board fills.
 var board_fill: float = 1.0
-# How much of its slot each playable item (Combiner/Resizer/Divisor) fills.
+# How much of its slot each playable item (ShapeShifter/Divisor) fills.
 var items_fill: float = 0.85
 # Multiplier over the auto-fitted font size of every text (info, menu
 # buttons, result).
 var info_text_scale: float = 1.0
 # Puzzle mode's solution preview: its slot's share of the playable items
-# zone's length (the Combiner/Resizer/Divisor split the rest). Reserved in
+# zone's length (the ShapeShifter/Divisor split the rest). Reserved in
 # every mode, left empty in Memory, so the items never move between modes.
 var preview_ratio: float = 0.35
 

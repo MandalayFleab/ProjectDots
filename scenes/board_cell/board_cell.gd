@@ -229,7 +229,7 @@ func _gui_input(event: InputEvent) -> void:
 				Selection.try_place_in(self)
 
 # Long press (on the cell or the piece sitting in it -- ShapePiece forwards
-# its presses here) expels the current piece. Same timing as the Combiner's.
+# its presses here) expels the current piece. Same timing as the ShapeShifter's.
 func start_hold() -> void:
 	# An IGNORE piece is mid-move or shrinking away after a failed check --
 	# expelling it then would race whatever is animating it.
@@ -244,7 +244,7 @@ func end_hold() -> void:
 	_hold_id += 1
 
 # Ticks every frame (rather than a single timer) so _hold_progress can drive
-# the snake indicator, same approach as Combiner._watch_long_press().
+# the snake indicator, same approach as ShapeShifter._watch_long_press().
 func _watch_hold(id: int) -> void:
 	var start_time: float = Time.get_ticks_msec() / 1000.0
 	var completed := false
@@ -254,9 +254,9 @@ func _watch_hold(id: int) -> void:
 		if get_viewport().gui_is_dragging() or current_piece == null:
 			break
 		var elapsed: float = Time.get_ticks_msec() / 1000.0 - start_time
-		_hold_progress = clampf(elapsed / Combiner.LONG_PRESS_SECONDS, 0.0, 1.0)
+		_hold_progress = clampf(elapsed / ShapeShifter.LONG_PRESS_SECONDS, 0.0, 1.0)
 		queue_redraw()
-		if elapsed >= Combiner.LONG_PRESS_SECONDS:
+		if elapsed >= ShapeShifter.LONG_PRESS_SECONDS:
 			completed = true
 			break
 		await get_tree().process_frame
@@ -270,7 +270,7 @@ func _watch_hold(id: int) -> void:
 	_expel(current_piece)
 
 # Duck-typed so any container that holds a single piece and exposes
-# detach(piece) works here -- BoardCell/BigCell, but also Combiner.
+# detach(piece) works here -- BoardCell/BigCell, but also ShapeShifter.
 static func release_from_current_parent(piece: ShapePiece) -> void:
 	var parent := piece.get_parent()
 	if parent != null and parent.has_method("detach"):

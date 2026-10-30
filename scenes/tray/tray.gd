@@ -38,7 +38,7 @@ func _collect_movers() -> Array[TrayCollision.Mover]:
 			# gets pushed matches where the piece will actually land.
 			movers.append(TrayCollision.Mover.new(get_local_mouse_position(), TrayCollision.radius_of(dragged)))
 	# Animated pieces are already parented to their destination (cell,
-	# Combiner, Divisor) while they travel, so map them into tray space.
+	# ShapeShifter, Divisor) while they travel, so map them into tray space.
 	var to_local := get_global_transform().affine_inverse()
 	for node in get_tree().get_nodes_in_group(ShapePiece.MOVING_GROUP):
 		var piece := node as ShapePiece
@@ -85,7 +85,7 @@ func _drop_data(at_position: Vector2, data: Variant) -> void:
 	if from_cell != null:
 		from_cell.report_dragged_out()
 
-# Slides pieces out of a source control (the board, Combiner, Divisor)
+# Slides pieces out of a source control (the board, ShapeShifter, Divisor)
 # instead of popping them into place: each starts just outside a random
 # point along one of the given sides and is launched outward, so even
 # pieces coming from the same cell spread out along the whole edge.
@@ -101,7 +101,7 @@ func launch_from(pieces: Array[ShapePiece], source: Control, sides: Array) -> vo
 		if not entry.is_empty() and _launch(piece, entry["rect"], [entry["side"]], starts):
 			continue
 		# No room right next to the requested sides (e.g. the board sits just
-		# above the Resizer, closer than a piece is tall) -- still slide it
+		# above the ShapeShifter, closer than a piece is tall) -- still slide it
 		# out from somewhere, rather than teleporting it.
 		if _launch(piece, source_rect, ALL_SIDES, starts):
 			continue
@@ -288,7 +288,7 @@ func _find_free_position(piece_size: Vector2, placed_rects: Array[Rect2]) -> Vec
 	var max_x: float = max(size.x - piece_size.x, 0.0)
 	var max_y: float = max(size.y - piece_size.y, 0.0)
 
-	# Tier 1: avoid both exclusion zones (board/combiner/divisor) and other
+	# Tier 1: avoid both exclusion zones (board/shape shifter/divisor) and other
 	# already-placed pieces.
 	for attempt in 40:
 		var candidate := Vector2(randf() * max_x, randf() * max_y)

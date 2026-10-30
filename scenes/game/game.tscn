@@ -3,10 +3,9 @@
 [ext_resource type="Script" uid="uid://khb6xq58yxw" path="res://scenes/game/game_manager.gd" id="1"]
 [ext_resource type="PackedScene" path="res://scenes/board/board.tscn" id="2"]
 [ext_resource type="PackedScene" path="res://scenes/tray/tray.tscn" id="3"]
-[ext_resource type="PackedScene" path="res://scenes/combiner/combiner.tscn" id="4"]
+[ext_resource type="PackedScene" path="res://scenes/shape_shifter/shape_shifter.tscn" id="4"]
 [ext_resource type="PackedScene" path="res://scenes/divisor/divisor.tscn" id="5"]
 [ext_resource type="PackedScene" path="res://scenes/debug_layout_panel/debug_layout_panel.tscn" id="6"]
-[ext_resource type="PackedScene" path="res://scenes/resizer/resizer.tscn" id="7"]
 [ext_resource type="Script" uid="uid://df2dmuuluobh4" path="res://scenes/solution_preview/solution_preview.gd" id="8"]
 
 [node name="Game" type="Control" unique_id=273081106]
@@ -38,7 +37,7 @@ visible = false
 anchors_preset = 0
 script = ExtResource("8")
 
-[node name="Combiner" parent="." unique_id=855323901 instance=ExtResource("4")]
+[node name="ShapeShifter" parent="." unique_id=855323901 instance=ExtResource("4")]
 layout_mode = 0
 anchor_top = 1.0
 anchor_bottom = 1.0
@@ -57,11 +56,6 @@ offset_left = -180.0
 offset_top = -180.0
 offset_right = -20.0
 offset_bottom = -20.0
-
-[node name="Resizer" parent="." unique_id=1177714731 instance=ExtResource("7")]
-layout_mode = 0
-offset_right = 160.0
-offset_bottom = 160.0
 
 [node name="ChronometerLabel" type="Label" parent="." unique_id=2105822660]
 layout_mode = 0

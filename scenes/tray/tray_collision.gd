@@ -3,9 +3,9 @@ class_name TrayCollision
 
 # Lightweight push/overlap solver for pieces loose in the Tray -- not Godot
 # physics, since pieces are Controls that hop between parents (Tray, cells,
-# Combiner) and the native drag moves only a preview, never the piece itself.
+# ShapeShifter) and the native drag moves only a preview, never the piece itself.
 # Pieces are treated as circles (smooth sliding pushes, no corner snagging);
-# walls (board/Combiner/Divisor and the tray's own edges) as real rectangles,
+# walls (board/ShapeShifter/Divisor and the tray's own edges) as real rectangles,
 # since those are what decide whether a piece stays reachable.
 #
 # Air-hockey feel: whatever displacement a hit causes in a frame is turned

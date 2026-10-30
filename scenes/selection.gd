@@ -36,7 +36,7 @@ func deselect() -> void:
 	selected_piece = null
 	_clear_highlights()
 
-# Untyped target: works for BoardCell/BigCell, and also Combiner/Divisor --
+# Untyped target: works for BoardCell/BigCell, and also ShapeShifter/Divisor --
 # anything exposing can_accept(piece) and place_piece(piece, animate).
 func try_place_in(target) -> void:
 	if selected_piece == null or not target.can_accept(selected_piece):
