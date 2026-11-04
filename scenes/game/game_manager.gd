@@ -1,12 +1,12 @@
 extends Control
+class_name GameManager
 
 const ShapePieceScene := preload("res://scenes/shape_piece/shape_piece.tscn")
 
-enum State { SHOWING, PLAYING, WON }
+enum State { SHOWING, PLAYING, WON, LOST }
 enum LayoutMode { AUTO, HORIZONTAL, VERTICAL }
-# Memory: the solution shows on the board for a few seconds, then must be
-# rebuilt from memory. Puzzle: no reveal -- a miniature of the solution
-# (SolutionPreview) stays in the scramble zone for the whole round.
+# What each mode does differently (how a round starts, what's counted, when
+# it's lost) lives in its ModeRules -- MemoryMode and PuzzleMode.
 enum GameMode { MEMORY, PUZZLE }
 
 # After every layout pass -- lets the debug layout panel follow an automatic
@@ -23,14 +23,6 @@ const RESIZE_SETTLE_SECONDS := 0.3
 # up, before the pieces are scrambled out of the board.
 const PREVIEW_SHRINK_SECONDS := 0.4
 
-# Placeholders in front of the info zone's texts. Only characters the
-# built-in font has (e.g. × # • ∞), so they look the same on every platform
-# -- emojis come from the system's own font, which a web export (Chrome)
-# doesn't have.
-const TIMER_ICON := "T"
-const MISTAKES_ICON := "×"
-const MOVES_ICON := "#"
-
 # The "+15" that pops up under the timer when HELP adds its time penalty:
 # starts green at PENALTY_FONT_RATIO of the timer's font size, and floats up
 # while fading out to a desaturated grey and shrinking to PENALTY_END_SCALE.
@@ -40,43 +32,27 @@ const PENALTY_COLOR := Color(0.3, 0.9, 0.4)
 const PENALTY_FADED_COLOR := Color(0.6, 0.6, 0.6, 0.0)
 const PENALTY_FLOAT_SECONDS := 2.0
 
-# The pause between HELP's auto-play moves, so each one reads on its own.
-const HELP_STEP_PAUSE := 0.15
-# Longest an auto-play step waits for the ShapeShifter/Divisor to send
-# its result back before giving up -- input is off during the auto-play, so
-# a step that never finished must never leave the game stuck.
-const HELP_STEP_TIMEOUT := 3.0
-
 @onready var board: Board = $Board
 @onready var tray: Tray = $Tray
 @onready var shifter: ShapeShifter = $ShapeShifter
 @onready var divisor: Divisor = $Divisor
-@onready var reveal_timer: Timer = $RevealTimer
 @onready var chronometer_label: Label = $ChronometerLabel
 @onready var result_label: Label = $ResultLabel
 @onready var replay_button: Button = $ReplayButton
 @onready var mistakes_label: Label = $MistakesLabel
 @onready var mode_button: Button = $ModeButton
+@onready var difficulty_button: OptionButton = $DifficultyButton
 @onready var help_button: Button = $HelpButton
 @onready var solution_preview: SolutionPreview = $SolutionPreview
 
 var state: State = State.SHOWING
-var elapsed_time: float = 0.0
 var level: LevelData
-var mistakes: int = 0
-# Puzzle mode's counter in place of mistakes (see _count_move()).
-var moves: int = 0
 var game_mode: GameMode = GameMode.MEMORY
-var help_uses_left: int = 0
-# ShapeShifter/Divisor uses the current HELP auto-play has made so far
-# (each one adds help_move_time_penalty).
-var _help_moves: int = 0
-var _help_penalty_applied: bool = false
+var difficulty_level: Difficulty.Level = Difficulty.Level.EASY
 
-# What each mode generates its levels from (see LevelSettings) -- kept
-# separate so each mode can have its own board sizes and shape counts.
-var memory_settings := LevelSettings.from_dict({"min_rows": 3, "max_rows": 5, "min_columns": 3, "max_columns": 5, "min_shapes": 2, "max_shapes": 5, "min_combined_color_shapes": 0, "max_combined_color_shapes": 2, "max_slack": 4, "max_filled_big_cells": 4, "help_uses": 1, "help_time_penalty": 15, "help_move_time_penalty": 5})
-var puzzle_settings := LevelSettings.from_dict({"min_rows": 4, "max_rows": 6, "min_columns": 4, "max_columns": 6, "min_shapes": 5, "max_shapes": 9, "min_combined_color_shapes": 1, "max_combined_color_shapes": 3, "max_slack": 4, "max_filled_big_cells": 4})
+# One per GameMode, in its order.
+var _modes: Array[ModeRules] = [MemoryMode.new(), PuzzleMode.new()]
+var _lose_screen := LoseScreen.new()
 
 # The two standard distributions (see LayoutConfig) -- which one applies
 # depends only on the screen's shape, and each is tuned separately, so the
@@ -104,14 +80,27 @@ func _ready() -> void:
 	# _place_tray()) -- its scene's full-rect anchors would otherwise keep
 	# stretching it back over the whole screen on every resize.
 	tray.set_anchors_preset(Control.PRESET_TOP_LEFT)
-	reveal_timer.timeout.connect(_on_reveal_timer_timeout)
+	for mode in _modes:
+		mode.game = self
+		mode.lost.connect(_on_round_lost)
+		add_child(mode)
+	(_modes[GameMode.MEMORY] as MemoryMode).time_penalty.connect(_show_time_penalty)
+	add_child(_lose_screen)
+	_lose_screen.retry.connect(_on_replay_pressed)
 	replay_button.pressed.connect(_on_replay_pressed)
 	mode_button.toggled.connect(_on_mode_toggled)
+	for level_name in Difficulty.LEVEL_NAMES:
+		difficulty_button.add_item(level_name)
+	difficulty_button.select(difficulty_level)
+	difficulty_button.item_selected.connect(_on_difficulty_selected)
 	help_button.pressed.connect(_on_help_pressed)
 	for item in [shifter, divisor]:
 		item.used.connect(_count_move)
 	_update_mode_button()
 	await _new_game()
+
+func active_mode() -> ModeRules:
+	return _modes[game_mode]
 
 func _on_replay_pressed() -> void:
 	await _new_game()
@@ -122,12 +111,14 @@ func _on_mode_toggled(puzzle: bool) -> void:
 	_update_mode_button()
 	await _new_game()
 
+# So does picking another difficulty.
+func _on_difficulty_selected(index: int) -> void:
+	difficulty_level = index as Difficulty.Level
+	await _new_game()
+
 func _update_mode_button() -> void:
 	mode_button.set_pressed_no_signal(game_mode == GameMode.PUZZLE)
-	mode_button.text = "Puzzle" if game_mode == GameMode.PUZZLE else "Memory"
-
-func _level_settings() -> LevelSettings:
-	return puzzle_settings if game_mode == GameMode.PUZZLE else memory_settings
+	mode_button.text = active_mode().display_name()
 
 # Fires whenever this (full-rect-anchored) control's own size changes, which
 # happens automatically whenever the viewport/browser window does. Ignored
@@ -186,15 +177,14 @@ func _new_game() -> void:
 	# Guards against a live-resize relayout racing an in-progress rebuild --
 	# board.gd's _level and _cells are about to be replaced wholesale.
 	_ready_for_resize = false
-	reveal_timer.stop()
+	for mode in _modes:
+		mode.stop()
+	_lose_screen.visible = false
 	Selection.deselect()
 	Selection.set_cells([])
 	tray.clear()
 	shifter.clear()
 	result_label.text = ""
-	mistakes = 0
-	moves = 0
-	_update_counter_label()
 
 	# On web, the browser canvas can take a couple of frames to report its
 	# real size after load -- wait for this root Control to actually have one
@@ -203,10 +193,13 @@ func _new_game() -> void:
 	while size.x <= 0.0 or size.y <= 0.0:
 		await get_tree().process_frame
 
-	level = LevelGenerator.generate(_level_settings())
-	solution_preview.visible = game_mode == GameMode.PUZZLE
-	help_button.visible = game_mode == GameMode.MEMORY
-	help_uses_left = _level_settings().help_uses
+	var mode := active_mode()
+	mode.apply_difficulty(difficulty_level)
+	level = LevelGenerator.generate(mode.difficulty.general)
+	mode.begin_round(level)
+	_update_counter_label()
+	solution_preview.visible = mode.shows_solution_preview()
+	help_button.visible = mode.has_help()
 	solution_preview.show_level(level)
 	zones = _compute_zones()
 	board.build(level, tray, _board_budget())
@@ -372,17 +365,18 @@ func _apply_items(zone: Rect2, config: LayoutConfig) -> void:
 # from the same (longest) sample, so they come out the same size whatever
 # the mode button currently says.
 func _apply_menu(zone: Rect2, config: LayoutConfig) -> void:
-	var rows := _cut(zone, not is_vertical_layout(), [0.5, 0.5])
-	_fit_button(mode_button, rows[0], config.info_text_scale)
-	_fit_button(replay_button, rows[1], config.info_text_scale)
+	var buttons: Array[Button] = [mode_button, difficulty_button, replay_button]
+	var rows := _cut(zone, not is_vertical_layout(), [1.0 / 3.0, 1.0 / 3.0, 1.0 / 3.0])
+	for i in buttons.size():
+		_fit_button(buttons[i], rows[i], config.info_text_scale)
 
 # The timer above the counter, both left-aligned in the info zone -- or,
 # in the vertical distribution, side by side on one line (the counter just
 # after the timer) centered in the zone, to keep its last row short. One font size is fitted so
 # both always fit.
 func _apply_info(zone: Rect2, config: LayoutConfig) -> void:
-	var timer_sample: String = _timer_text(0)
-	var counter_sample: String = "%s 000" % MISTAKES_ICON
+	var timer_sample: String = ModeRules.timer_text_for(0)
+	var counter_sample: String = active_mode().counter_sample()
 	if is_vertical_layout():
 		_apply_info_in_line(zone, config, timer_sample, counter_sample)
 		return
@@ -453,56 +447,40 @@ func _can_drop_data(_at_position: Vector2, data: Variant) -> bool:
 func _drop_data(_at_position: Vector2, data: Variant) -> void:
 	Selection.drop_into_target(data)
 
-# Puzzle mode counts moves instead of mistakes: every ShapeShifter combine,
-# resize or long-press expel, Divisor split, piece put into a cell, and
-# piece sent out of one (long press, eviction, or dragged out). Memory mode
-# only counts mistakes.
+# A move, as Puzzle mode counts them: every ShapeShifter combine, resize or
+# long-press expel, Divisor split, piece put into a cell, and piece sent out
+# of one (long press, eviction, or dragged out). Only counted while playing
+# -- what the mode does with it is up to the mode.
 func _count_move() -> void:
-	if game_mode != GameMode.PUZZLE or state != State.PLAYING:
+	if state != State.PLAYING:
 		return
-	moves += 1
+	active_mode().on_move()
 	_update_counter_label()
 
 # The info strip's counter: mistakes in Memory mode, moves in Puzzle mode.
 func _update_counter_label() -> void:
-	if game_mode == GameMode.PUZZLE:
-		mistakes_label.text = "%s %d" % [MOVES_ICON, moves]
-	else:
-		mistakes_label.text = "%s %d" % [MISTAKES_ICON, mistakes]
-
-static func _format_time(total_seconds: int) -> String:
-	return "%02d:%02d" % [total_seconds / 60, total_seconds % 60]
-
-static func _timer_text(total_seconds: int) -> String:
-	return "%s %s" % [TIMER_ICON, _format_time(total_seconds)]
+	mistakes_label.text = active_mode().counter_text()
 
 func _process(delta: float) -> void:
 	if state != State.PLAYING:
 		return
-	elapsed_time += delta
-	chronometer_label.text = _timer_text(int(elapsed_time))
+	active_mode().tick(delta)
+	chronometer_label.text = active_mode().timer_text()
 
 func _start_round() -> void:
 	state = State.SHOWING
-	_update_help_button()
-	elapsed_time = 0.0
-	chronometer_label.text = _timer_text(0)
-	if game_mode == GameMode.PUZZLE:
-		# The solution preview stays up the whole round -- nothing to
-		# memorize first, so the pieces scramble out right away.
-		_scramble_pieces()
+	update_help_button()
+	chronometer_label.text = active_mode().timer_text()
+	active_mode().start_round()
+
+func _on_round_lost(reason: String) -> void:
+	if state != State.PLAYING and state != State.SHOWING:
 		return
-	for cell in board.get_cells():
-		if not cell.has_requirement():
-			continue
-		var preview := ShapePieceScene.instantiate() as ShapePiece
-		preview.shape_type = cell.required_spec.shape_type
-		preview.color = cell.required_spec.color
-		preview.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		preview.size = cell.size * 0.8
-		cell.add_child(preview)
-		preview.position = (cell.size - preview.size) * 0.5
-	reveal_timer.start()
+	state = State.LOST
+	active_mode().stop()
+	Selection.deselect()
+	update_help_button()
+	_lose_screen.show_reason(reason)
 
 # Shrinks each control toward its own center and resolves once they're gone,
 # returning false if Replay was pressed meanwhile (the round no longer
@@ -510,7 +488,7 @@ func _start_round() -> void:
 # mid-shrink frees them along with their cells, while the wait uses a scene
 # timer that always fires. Input is ignored while shrinking -- callers that
 # keep the controls afterwards reset scale and mouse_filter themselves.
-func _shrink_away(controls: Array) -> bool:
+func shrink_away(controls: Array) -> bool:
 	var tweens: Array[Tween] = []
 	for control in controls:
 		control.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -533,72 +511,26 @@ func _shrink_away(controls: Array) -> bool:
 			control.scale = Vector2.ZERO
 	return level == round_level
 
-func _on_reveal_timer_timeout() -> void:
-	var previews: Array = []
-	for cell in board.get_cells():
-		previews.append_array(cell.get_children())
-	if not await _shrink_away(previews):
-		return
-
-	for cell in board.get_cells():
-		for child in cell.get_children():
-			child.queue_free()
-	_scramble_pieces()
-
-func _scramble_pieces() -> void:
+# The round's pieces come out of the board into the scramble zone (see
+# LevelData.disposition), and play begins -- called by the mode once
+# whatever comes first (e.g. Memory's reveal) is over.
+func scramble_pieces() -> void:
 	var piece_size: Vector2 = board.cell_size * 0.8
 	var pieces: Array[ShapePiece] = []
-	for group in PieceDecomposer.random_disposition(level.shapes_to_place):
+	for group in level.disposition:
 		pieces.append(_make_scramble_piece(group, piece_size))
 
 	state = State.PLAYING
-	_update_help_button()
+	update_help_button()
 	tray.launch_from(pieces, board, Tray.ALL_SIDES)
 
-# Only while actually playing (not during the reveal, nor once won), and
-# only while uses are left.
-func _update_help_button() -> void:
-	help_button.disabled = help_uses_left <= 0 or state != State.PLAYING
+func update_help_button() -> void:
+	help_button.disabled = not active_mode().can_help()
 
-# Memory mode's HELP: plays one still-unsolved shape into its cell for the
-# player, at the cost of a use and a time penalty: help_time_penalty, plus
-# help_move_time_penalty for every ShapeShifter/Divisor use it took (see
-# _help_plan()). Applied right before the final drag into the cell (see
-# _help_move()), so it always matches the moves actually made, and still
-# lands before that drag can win the round and stop the timer. When nothing
-# can be placed at all, neither a use nor time is spent.
 func _on_help_pressed() -> void:
-	if help_uses_left <= 0 or state != State.PLAYING:
-		return
-	var plan := _help_plan()
-	if plan.is_empty():
-		return
-	help_uses_left -= 1
-	_update_help_button()
+	active_mode().help()
 
-	# The auto-play takes a few moves -- the player sitting still for them
-	# keeps a stray tap from grabbing a piece it's about to use.
-	get_viewport().gui_disable_input = true
-	_help_moves = 0
-	_help_penalty_applied = false
-	if plan["exact"]:
-		await _help_move(plan["sources"][0], plan["cell"])
-	else:
-		await _help_build(plan["cell"], plan["sources"])
-	get_viewport().gui_disable_input = false
-	# An auto-play cut short by a timed-out step still pays for what it did.
-	_apply_help_penalty()
-
-func _apply_help_penalty() -> void:
-	if _help_penalty_applied or state != State.PLAYING:
-		return
-	_help_penalty_applied = true
-	var settings := _level_settings()
-	var penalty: float = settings.help_time_penalty + _help_moves * settings.help_move_time_penalty
-	if penalty > 0.0:
-		elapsed_time += penalty
-		_show_time_penalty(penalty)
-
+# The "+15" Memory mode's HELP adds to the timer.
 func _show_time_penalty(seconds: float) -> void:
 	var label := Label.new()
 	label.text = "+%d" % int(seconds)
@@ -624,178 +556,6 @@ func _show_time_penalty(seconds: float) -> void:
 	tween.tween_method(func(color: Color): label.add_theme_color_override("font_color", color),
 		PENALTY_COLOR, PENALTY_FADED_COLOR, PENALTY_FLOAT_SECONDS)
 	tween.chain().tween_callback(label.queue_free)
-
-# Picks one random unsolved cell and the pieces HELP will play into it:
-# {"cell", "sources", "exact"}, or {} if no cell can be helped.
-#
-# Prefers cells with an exactly matching piece available -- loose in the
-# scramble zone, sitting in some other cell it doesn't solve, or held by the
-# ShapeShifter -- which simply travels into the cell ("exact"). Otherwise picks
-# the fewest pieces that hold the units the cell needs, which _help_build()
-# then runs through the Divisor/ShapeShifter exactly as a player would.
-func _help_plan() -> Dictionary:
-	var pieces: Array = tray.get_children().filter(func(c): return c is ShapePiece and c.visible)
-	for cell in board.get_cells():
-		if not cell.locked and cell.current_piece != null and not cell.is_solved():
-			pieces.append(cell.current_piece)
-	if shifter.held_piece != null:
-		pieces.append(shifter.held_piece)
-	pieces = pieces.filter(func(p): return not p.is_in_group(ShapePiece.MOVING_GROUP))
-
-	var exact := {}
-	var builds := {}
-	for cell in board.get_cells():
-		if cell.locked or not cell.has_requirement() or cell.is_solved():
-			continue
-		var fitting: Array = pieces.filter(func(p): return p.is_big == cell.expects_big() \
-			and p.shape_type == cell.required_spec.shape_type and p.color == cell.required_spec.color)
-		if not fitting.is_empty():
-			exact[cell] = fitting
-			continue
-		var sources := _build_sources(PieceDecomposer.to_units(cell.required_spec, cell.expects_big()), pieces)
-		if not sources.is_empty():
-			builds[cell] = sources
-
-	if not exact.is_empty():
-		var cell: BoardCell = exact.keys().pick_random()
-		return {"cell": cell, "sources": [exact[cell].pick_random()], "exact": true}
-	if not builds.is_empty():
-		var cell: BoardCell = builds.keys().pick_random()
-		return {"cell": cell, "sources": builds[cell], "exact": false}
-	return {}
-
-# Drags a piece into a cell the same way tap-to-place does, and waits for it
-# to land. Always HELP's last move, so its penalty is settled here first.
-func _help_move(piece: ShapePiece, cell: BoardCell) -> void:
-	_apply_help_penalty()
-	if Selection.selected_piece == piece:
-		Selection.deselect()
-	cell.place_piece(piece, true)
-	await get_tree().create_timer(Selection.MOVE_DURATION + HELP_STEP_PAUSE).timeout
-
-# Drags a piece into the ShapeShifter or Divisor and returns what comes
-# back out into the tray -- [] if nothing did within HELP_STEP_TIMEOUT.
-func _help_use_item(item: Control, piece: ShapePiece) -> Array:
-	if Selection.selected_piece == piece:
-		Selection.deselect()
-	_help_moves += 1
-	var result: Array = []
-	var collect := func(pieces: Array): result.append_array(pieces)
-	item.produced.connect(collect, CONNECT_ONE_SHOT)
-	item.place_piece(piece, true)
-	var deadline: float = Time.get_ticks_msec() / 1000.0 + HELP_STEP_TIMEOUT
-	while result.is_empty() and Time.get_ticks_msec() / 1000.0 < deadline:
-		await get_tree().process_frame
-	if item.produced.is_connected(collect):
-		item.produced.disconnect(collect)
-	await get_tree().create_timer(HELP_STEP_PAUSE).timeout
-	return result
-
-# Drags two single units into the ShapeShifter, one after the other, and returns
-# the (always big) piece it makes, or null if it never came out. Clears out
-# anything else the player left in there first, so it doesn't get combined
-# (or swapped) with ours.
-func _help_combine(a: ShapePiece, b: ShapePiece) -> ShapePiece:
-	if shifter.held_piece == b:
-		var swap := a
-		a = b
-		b = swap
-	if shifter.held_piece != null and shifter.held_piece != a:
-		shifter.expel_held()
-		await get_tree().create_timer(HELP_STEP_PAUSE).timeout
-	if shifter.held_piece != a:
-		if Selection.selected_piece == a:
-			Selection.deselect()
-		shifter.place_piece(a, true)
-		await get_tree().create_timer(Selection.MOVE_DURATION + HELP_STEP_PAUSE).timeout
-	var result: Array = await _help_use_item(shifter, b)
-	return null if result.is_empty() else result[0]
-
-# Builds the cell's piece out of `sources` the way a player would, one
-# visible move at a time, then drags it into the cell:
-#   1. A source holding exactly the cell's units, just at the other size (a
-#      mixed colour), goes through the ShapeShifter to switch size.
-#   2. Otherwise every two-unit source goes through the Divisor first, and
-#      only the halves the cell needs are kept (the rest stay in the tray).
-#   3. Two needed units are combined in the ShapeShifter -- and, if the cell
-#      wants a normal-size mixed colour, the (always big) result goes back in
-#      to shrink.
-# Stops wherever a step times out (see _help_use_item()); whatever was made
-# so far just stays in the tray.
-func _help_build(cell: BoardCell, sources: Array) -> void:
-	var needed := PieceDecomposer.to_units(cell.required_spec, cell.expects_big())
-	var exact_units = _subtract_units(_units_of(sources[0]), needed)
-	if sources.size() == 1 and exact_units != null and exact_units.is_empty():
-		var resized: Array = await _help_use_item(shifter, sources[0])
-		if not resized.is_empty():
-			await _help_move(resized[0], cell)
-		return
-
-	var remaining: Array[PieceSpec] = needed.duplicate()
-	var singles: Array[ShapePiece] = []
-	for source in sources:
-		var parts: Array = [source]
-		if _units_of(source).size() == 2:
-			parts = await _help_use_item(divisor, source)
-			if parts.is_empty():
-				return
-		for part in parts:
-			var left = _subtract_units(remaining, _units_of(part))
-			if left != null:
-				remaining = left
-				singles.append(part)
-
-	if singles.size() != needed.size():
-		return
-	var result: ShapePiece = singles[0]
-	if needed.size() == 2:
-		result = await _help_combine(singles[0], singles[1])
-		if result == null:
-			return
-		if not cell.expects_big():
-			var resized: Array = await _help_use_item(shifter, result)
-			if resized.is_empty():
-				return
-			result = resized[0]
-	await _help_move(result, cell)
-
-# The primary units a piece is made of (see PieceDecomposer).
-static func _units_of(piece: ShapePiece) -> Array[PieceSpec]:
-	if piece.original_a != null:
-		return [piece.original_a, piece.original_b]
-	return [PieceSpec.new(piece.shape_type, piece.color)]
-
-# `units` minus every unit in `needed` (matched by shape and colour), or
-# null if `units` doesn't hold all of them.
-static func _subtract_units(units: Array[PieceSpec], needed: Array[PieceSpec]) -> Variant:
-	var left: Array[PieceSpec] = units.duplicate()
-	for unit in needed:
-		var index := -1
-		for i in left.size():
-			if left[i].shape_type == unit.shape_type and left[i].color == unit.color:
-				index = i
-				break
-		if index < 0:
-			return null
-		left.remove_at(index)
-	return left
-
-# The fewest pieces (one, or else two) that together hold every unit in
-# `needed`, picked at random among the options, or [] if no such pieces
-# exist.
-func _build_sources(needed: Array[PieceSpec], pieces: Array) -> Array:
-	var options: Array = []
-	for piece in pieces:
-		if _subtract_units(_units_of(piece), needed) != null:
-			options.append([piece])
-	if options.is_empty() and needed.size() == 2:
-		for a in pieces.size():
-			for b in range(a + 1, pieces.size()):
-				var units: Array[PieceSpec] = _units_of(pieces[a])
-				units.append_array(_units_of(pieces[b]))
-				if _subtract_units(units, needed) != null:
-					options.append([pieces[a], pieces[b]])
-	return [] if options.is_empty() else options.pick_random()
 
 # One group from PieceDecomposer.random_disposition(): a single unit makes a
 # normal primary piece, a pair goes through the same setup_pair() the
@@ -841,9 +601,13 @@ func _check_solution(open_cells: Array) -> void:
 			else:
 				cell.lock()
 		else:
-			mistakes += 1
 			wrong_cells.append(cell)
+	if not wrong_cells.is_empty():
+		active_mode().on_mistakes(wrong_cells.size())
 	_update_counter_label()
+	# Too many mistakes -- the board stays as it is under the lose screen.
+	if state != State.PLAYING:
+		return
 
 	# Misplaced pieces shrink away in their cells first, same as the reveal
 	# previews, and only then get released and re-scrambled.
@@ -856,9 +620,10 @@ func _check_solution(open_cells: Array) -> void:
 		# another cell mid-shrink.
 		Selection.deselect()
 		_checking_solution = true
-		var still_this_round: bool = await _shrink_away(shrinking)
+		var still_this_round: bool = await shrink_away(shrinking)
 		_checking_solution = false
-		if not still_this_round:
+		# Replaced, or lost meanwhile (e.g. Puzzle's countdown ran out).
+		if not still_this_round or state != State.PLAYING:
 			return
 
 	var wrong_pieces: Array[ShapePiece] = []
@@ -878,7 +643,8 @@ func _check_solution(open_cells: Array) -> void:
 		for cell in pending_empty_cells:
 			cell.lock()
 		state = State.WON
-		_update_help_button()
-		result_label.text = "Solved in %s!" % _format_time(int(elapsed_time))
+		active_mode().stop()
+		update_help_button()
+		result_label.text = active_mode().won_text()
 	else:
 		tray.launch_from(wrong_pieces, board, Tray.ALL_SIDES)

@@ -1,31 +1,45 @@
 class_name LevelGenerator
 extends RefCounted
 
-static func generate(settings: LevelSettings) -> LevelData:
-	var rows := randi_range(settings.min_rows, settings.max_rows)
-	var columns := randi_range(settings.min_columns, settings.max_columns)
+# Every level is laid out on the same BOARD_SIZE x BOARD_SIZE grid -- only
+# the cells holding a shape or left intentionally empty are active (visible),
+# the rest stay inactive.
+const BOARD_SIZE := 5
+const BOARD_CELLS := BOARD_SIZE * BOARD_SIZE
+# The most 2x2 big cells (filled or empty) a level can have.
+const MAX_BIG_CELLS := 4
+# Extra grid cells a big cell takes over a normal one (4 instead of 1).
+const BIG_CELL_EXTRA := 3
+
+# Rolls this round's counts from the general parameters (see
+# GeneralParameters.roll()) and lays them out.
+static func generate(parameters: GeneralParameters) -> LevelData:
+	var counts := parameters.roll(BOARD_CELLS)
+	return generate_counts(counts["shapes"], counts["empty_cells"], counts["compound_colors"])
+
+# Exactly shape_count shapes (a big cell's counts once), compound_count of
+# them in a compound colour, and empty_count cells left intentionally empty
+# (an empty big cell counts once too). shape_count + empty_count must fit
+# in BOARD_CELLS.
+static func generate_counts(shape_count: int, empty_count: int, compound_count: int) -> LevelData:
+	var rows := BOARD_SIZE
+	var columns := BOARD_SIZE
 
 	var level := LevelData.new()
 	level.rows = rows
 	level.columns = columns
-	level.max_dimension = maxi(settings.max_rows, settings.max_columns)
+	level.max_dimension = BOARD_SIZE
 	level.cells = []
 	for i in rows * columns:
 		level.cells.append({"kind": LevelData.CellKind.INACTIVE, "spec": null})
 
-	# Every shape counts once towards the total, whatever its size or colour
-	# -- a big cell's shape included.
-	var shape_count: int = randi_range(settings.min_shapes, settings.max_shapes)
-	var free_room: int = rows * columns - shape_count
-
-	# A filled big cell takes 4 grid cells for 1 shape (3 more than a normal
-	# cell would), an empty one 4 -- capped so the big cells always leave
-	# room for every shape.
-	var max_blocks: int = (rows / 2) * (columns / 2)
-	var max_filled: int = mini(mini(settings.max_filled_big_cells, max_blocks), mini(shape_count, maxi(free_room, 0) / 3))
-	var filled_big_cell_count: int = randi_range(0, max_filled)
+	# Each big cell takes BIG_CELL_EXTRA more grid cells than a normal one
+	# would -- capped so they always leave room for every shape and empty cell.
+	var spare: int = BOARD_CELLS - shape_count - empty_count
+	var filled_big_cell_count: int = randi_range(0, mini(mini(MAX_BIG_CELLS, shape_count), maxi(spare, 0) / BIG_CELL_EXTRA))
+	spare -= filled_big_cell_count * BIG_CELL_EXTRA
 	var empty_big_cell_count: int = 0
-	if max_blocks > filled_big_cell_count and free_room - filled_big_cell_count * 3 >= 4:
+	if empty_count > 0 and filled_big_cell_count < MAX_BIG_CELLS and spare >= BIG_CELL_EXTRA:
 		empty_big_cell_count = randi_range(0, 1)
 
 	var anchors: Array[Vector2i] = []
@@ -37,7 +51,9 @@ static func generate(settings: LevelSettings) -> LevelData:
 		if not _overlaps_existing(r, c, anchors):
 			anchors.append(Vector2i(r, c))
 
-	# Placement can fall short if the grid is tight; recompute actual counts from what fit.
+	# Placement can fall short if the grid is tight; recompute actual counts
+	# from what fit -- a big cell that didn't fit just becomes a normal one,
+	# which always takes less room.
 	filled_big_cell_count = mini(filled_big_cell_count, anchors.size())
 	empty_big_cell_count = anchors.size() - filled_big_cell_count
 
@@ -49,9 +65,9 @@ static func generate(settings: LevelSettings) -> LevelData:
 			free_indices.append(i)
 	free_indices.shuffle()
 
-	# Only fewer than shape_count if the grid itself is too small for it.
+	# Only fewer than asked if the grid itself is too small for it.
 	shape_count = mini(shape_count, filled_big_cell_count + free_indices.size())
-	var specs := _random_specs(shape_count, randi_range(settings.min_combined_color_shapes, settings.max_combined_color_shapes))
+	var specs := _random_specs(shape_count, compound_count)
 
 	for i in anchors.size():
 		var anchor := anchors[i]
@@ -71,9 +87,8 @@ static func generate(settings: LevelSettings) -> LevelData:
 		level.cells[free_indices[cursor]] = {"kind": LevelData.CellKind.NORMAL, "spec": specs.pop_back()}
 		cursor += 1
 
-	var normal_empty_budget: int = settings.max_slack if empty_big_cell_count == 0 else 0
-	var active_empty_count: int = randi_range(0, mini(normal_empty_budget, free_indices.size() - cursor))
-	for i in active_empty_count:
+	var normal_empty_count: int = mini(empty_count - empty_big_cell_count, free_indices.size() - cursor)
+	for i in normal_empty_count:
 		level.cells[free_indices[cursor]] = {"kind": LevelData.CellKind.NORMAL, "spec": null}
 		cursor += 1
 
@@ -87,6 +102,7 @@ static func generate(settings: LevelSettings) -> LevelData:
 			level.shapes_to_place.append_array(PieceDecomposer.to_units(cell["spec"], true))
 		elif cell["kind"] == LevelData.CellKind.NORMAL:
 			level.shapes_to_place.append_array(PieceDecomposer.to_units(cell["spec"], false))
+	level.disposition = PieceDecomposer.random_disposition(level.shapes_to_place)
 
 	return level
 
