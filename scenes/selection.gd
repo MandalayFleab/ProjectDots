@@ -9,6 +9,13 @@ const MOVE_DURATION := 0.35
 # the piece lands if dropped there.
 const DROP_RANGE_RATIO := 0.5
 
+# The "allowed places indicator" (play screen checkbox), all or nothing:
+# selecting or dragging a piece shows which cells can take it, AND cells
+# refuse a shape already tried in them (see BoardCell.can_accept()). The
+# green "lands here" glow while dragging is drop feedback, not part of it,
+# so it stays.
+var places_indicator: bool = true
+
 var selected_piece: ShapePiece = null
 var _cells: Array = []
 var _drag_piece: ShapePiece = null
@@ -105,6 +112,8 @@ func _set_drag_target(cell: BoardCell) -> void:
 		cell.set_targeted(true)
 
 func _highlight_for(piece: ShapePiece) -> void:
+	if not places_indicator:
+		return
 	for cell in _cells:
 		cell.set_highlight(BoardCell.Highlight.CAN_ACCEPT if cell.can_accept(piece) else BoardCell.Highlight.CANNOT_ACCEPT)
 

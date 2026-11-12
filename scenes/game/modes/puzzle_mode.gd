@@ -64,3 +64,9 @@ func counter_sample() -> String:
 
 func won_text() -> String:
 	return "Solved with %s left!" % format_time(ceili(time_left))
+
+func score_lines(solved: bool) -> Array:
+	return [
+		["SOLVE TIME", time_points(parameters.solve_seconds - time_left, parameters.solve_seconds - parameters.score_floor_seconds_left) if solved else 0],
+		["BEST SOLUTION", FLAWLESS_POINTS if solved and moves <= best_solution else 0],
+	]

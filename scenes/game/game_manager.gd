@@ -12,6 +12,8 @@ enum GameMode { MEMORY, PUZZLE }
 # After every layout pass -- lets the debug layout panel follow an automatic
 # switch between the horizontal and vertical distributions.
 signal layout_applied
+# The player asked to leave the game (in-game options > MAIN MENU).
+signal exit_requested
 
 # How long the viewport must sit still before a live resize is treated as
 # "settled" and actually relaid out. Browsers fire resize continuously while
@@ -23,7 +25,8 @@ const RESIZE_SETTLE_SECONDS := 0.3
 # up, before the pieces are scrambled out of the board.
 const PREVIEW_SHRINK_SECONDS := 0.4
 
-# The "+15" that pops up under the timer when HELP adds its time penalty:
+# The "+15" that pops up under the timer when HELP adds its time penalty (or
+# the "-5" Memory mode takes off for a round solved without the indicator):
 # starts green at PENALTY_FONT_RATIO of the timer's font size, and floats up
 # while fading out to a desaturated grey and shrinking to PENALTY_END_SCALE.
 const PENALTY_FONT_RATIO := 1.6
@@ -32,27 +35,58 @@ const PENALTY_COLOR := Color(0.3, 0.9, 0.4)
 const PENALTY_FADED_COLOR := Color(0.6, 0.6, 0.6, 0.0)
 const PENALTY_FLOAT_SECONDS := 2.0
 
+# How long a solved board stays on screen before the score shows up: the
+# end screen, or in infinite mode the score so far, before the next round.
+const SOLVED_HOLD_SECONDS := 1.5
+# Infinite mode: how long the score so far stays up between rounds.
+const INFINITE_SCORE_SECONDS := 3.0
+
 @onready var board: Board = $Board
 @onready var tray: Tray = $Tray
 @onready var shifter: ShapeShifter = $ShapeShifter
 @onready var divisor: Divisor = $Divisor
 @onready var chronometer_label: Label = $ChronometerLabel
-@onready var result_label: Label = $ResultLabel
-@onready var replay_button: Button = $ReplayButton
 @onready var mistakes_label: Label = $MistakesLabel
-@onready var mode_button: Button = $ModeButton
-@onready var difficulty_button: OptionButton = $DifficultyButton
 @onready var help_button: Button = $HelpButton
 @onready var solution_preview: SolutionPreview = $SolutionPreview
 
+# What the play screen picked -- set before this enters the tree (see App).
+# Run on its own (e.g. this scene played from the editor), it's a quick game
+# with whatever Settings hold.
+var setup: GameSetup
 var state: State = State.SHOWING
 var level: LevelData
 var game_mode: GameMode = GameMode.MEMORY
 var difficulty_level: Difficulty.Level = Difficulty.Level.EASY
+# The difficulty picked in the in-game options -- applied to the next round
+# once the panel closes.
+var _pending_difficulty: Difficulty.Level = Difficulty.Level.EASY
+# This game's points so far (see ScoreTally) -- one round, or a whole
+# infinite run.
+var score := ScoreTally.new()
 
 # One per GameMode, in its order.
 var _modes: Array[ModeRules] = [MemoryMode.new(), PuzzleMode.new()]
-var _lose_screen := LoseScreen.new()
+var _options_panel := OverlayPanel.new()
+var _end_screen := OverlayPanel.new(false, false, true)
+# "Give up?" -- see _on_give_up_pressed().
+var _give_up_confirm := OverlayPanel.new()
+# Runs out SOLVED_HOLD_SECONDS after a round is solved.
+var _solved_timer := Timer.new()
+# Infinite mode: runs out INFINITE_SCORE_SECONDS after the score shows up.
+var _next_round_timer := Timer.new()
+# Infinite mode: each round's difficulty.
+var _progression := InfiniteProgression.new()
+# Whether the end screen up is the one that ends the game (with its
+# buttons), not infinite mode's score between rounds.
+var _end_screen_final: bool = false
+
+# The menu zone's buttons, built from _menu_zone_slots(), and the slot each
+# one sits in.
+var _menu_entries: Array[MenuEntry] = []
+var _menu_buttons: Array[Button] = []
+var _menu_button_slots: Array[int] = []
+var _menu_slot_count: int = 0
 
 # The two standard distributions (see LayoutConfig) -- which one applies
 # depends only on the screen's shape, and each is tuned separately, so the
@@ -83,42 +117,238 @@ func _ready() -> void:
 	for mode in _modes:
 		mode.game = self
 		mode.lost.connect(_on_round_lost)
+		mode.time_penalty.connect(_show_time_penalty)
 		add_child(mode)
-	(_modes[GameMode.MEMORY] as MemoryMode).time_penalty.connect(_show_time_penalty)
-	add_child(_lose_screen)
-	_lose_screen.retry.connect(_on_replay_pressed)
-	replay_button.pressed.connect(_on_replay_pressed)
-	mode_button.toggled.connect(_on_mode_toggled)
-	for level_name in Difficulty.LEVEL_NAMES:
-		difficulty_button.add_item(level_name)
-	difficulty_button.select(difficulty_level)
-	difficulty_button.item_selected.connect(_on_difficulty_selected)
+	if setup == null:
+		setup = GameSetup.from_settings(GameSetup.PlayType.QUICK)
+	game_mode = setup.game_mode
+	difficulty_level = setup.difficulty
+	_pending_difficulty = difficulty_level
+	Selection.places_indicator = setup.places_indicator
+	# Before the overlays below, so these never take input meant for them.
+	_build_menu_buttons()
+	score.counts_strikes = setup.play_type == GameSetup.PlayType.INFINITE
+	add_child(_end_screen)
+	add_child(_options_panel)
+	add_child(_give_up_confirm)
+	_options_panel.closed.connect(_on_options_closed)
+	_solved_timer.one_shot = true
+	_solved_timer.timeout.connect(_on_solved_hold_over)
+	add_child(_solved_timer)
+	_next_round_timer.one_shot = true
+	_next_round_timer.timeout.connect(_new_game)
+	add_child(_next_round_timer)
 	help_button.pressed.connect(_on_help_pressed)
 	for item in [shifter, divisor]:
 		item.used.connect(_count_move)
-	_update_mode_button()
 	await _new_game()
 
 func active_mode() -> ModeRules:
 	return _modes[game_mode]
 
+# A new game from scratch: the score (and an infinite run's strike) resets.
 func _on_replay_pressed() -> void:
+	score.reset()
+	_progression.reset()
 	await _new_game()
 
-# Switching mode starts a fresh round in the new mode right away.
-func _on_mode_toggled(puzzle: bool) -> void:
-	game_mode = GameMode.PUZZLE if puzzle else GameMode.MEMORY
-	_update_mode_button()
-	await _new_game()
+func _is_quick() -> bool:
+	return setup.is_quick()
 
-# So does picking another difficulty.
-func _on_difficulty_selected(index: int) -> void:
-	difficulty_level = index as Difficulty.Level
-	await _new_game()
+func _is_infinite() -> bool:
+	return setup.play_type == GameSetup.PlayType.INFINITE
 
-func _update_mode_button() -> void:
-	mode_button.set_pressed_no_signal(game_mode == GameMode.PUZZLE)
-	mode_button.text = active_mode().display_name()
+# The menu zone's slots, top to bottom (left to right in the vertical
+# distribution). A slot can hold several buttons as long as only one of them
+# is ever shown at a time. Slots stay put whatever they show (or if they
+# show nothing), so OPTIONS is in the same place in every game, and GIVE UP
+# always sits at the far end, away from it.
+func _menu_zone_slots() -> Array:
+	return [
+		[MenuEntry.button("OPTIONS", toggle_options)],
+		[
+			MenuEntry.button("REPLAY", _on_replay_pressed).shown_when(_is_quick),
+			MenuEntry.button("GIVE UP", _on_give_up_pressed).shown_when(_can_give_up),
+		],
+	]
+
+# Daily and infinite games have no REPLAY or MAIN MENU: the only way out
+# is to give up, which ends the game on the end screen.
+func _can_give_up() -> bool:
+	return not setup.is_quick()
+
+# What the in-game options panel lists, top to bottom.
+func _options_entries() -> Array[MenuEntry]:
+	return [
+		MenuEntry.info("CURRENT SCORE:", func(): return _points_text(score.total())),
+		MenuEntry.selector("DIFFICULTY:", Difficulty.level_display_names(),
+			func(): return _pending_difficulty,
+			func(index): _pending_difficulty = index as Difficulty.Level).shown_when(_is_quick),
+		MenuEntry.checkbox("ASK BEFORE GIVING UP",
+			func(): return Settings.confirm_give_up,
+			func(on): Settings.confirm_give_up = on).shown_when(_can_give_up),
+		MenuEntry.checkbox("ASK BEFORE NEXT LEVEL",
+			func(): return Settings.ask_next_level,
+			func(on): Settings.ask_next_level = on).shown_when(_is_infinite),
+		MenuEntry.button("RESUME", _options_panel.close),
+		MenuEntry.button("MAIN MENU", func(): exit_requested.emit()).shown_when(_is_quick),
+	]
+
+func _give_up_confirm_entries() -> Array[MenuEntry]:
+	return [
+		MenuEntry.heading("GIVE UP?", UiStyle.TITLE_FONT),
+		MenuEntry.heading("This game ends here, with the points you have so far."),
+		MenuEntry.button_row([
+			MenuEntry.button("KEEP PLAYING", _give_up_confirm.close),
+			MenuEntry.button("GIVE UP", _give_up),
+		]),
+	]
+
+func _on_give_up_pressed() -> void:
+	if Settings.confirm_give_up:
+		Selection.deselect()
+		_give_up_confirm.open(_give_up_confirm_entries())
+	else:
+		_give_up()
+
+# Ends the game as a lost round -- or, if the round was already solved
+# (infinite mode, before the next one comes), with what was scored so far.
+func _give_up() -> void:
+	_give_up_confirm.close()
+	const OUTCOME := "You gave up."
+	if state == State.WON:
+		_solved_timer.stop()
+		_next_round_timer.stop()
+		var infinite := setup.play_type == GameSetup.PlayType.INFINITE
+		_show_end_screen(OUTCOME if infinite else active_mode().won_text())
+	else:
+		var placed := _correctly_placed_count()
+		_on_round_lost(OUTCOME, [["PLACED SHAPES\u00a0:\u00a0%d" % placed, placed * ModeRules.PLACED_SHAPE_POINTS]])
+
+# Cells holding the shape they require right now -- locked in by a check or
+# not yet checked alike.
+func _correctly_placed_count() -> int:
+	var count := 0
+	for cell in board.get_cells():
+		if cell.has_requirement() and cell.is_solved():
+			count += 1
+	return count
+
+# The end screen, top to bottom: the level's outcome, the score in a box
+# (its total, then where it came from), and -- once the game is over -- what
+# to do next. What the box holds depends on the game:
+#
+#   quick / daily      FINAL SCORE: the level's total and its lines (see
+#                      ModeRules.score_lines()).
+#   infinite, between  LEVEL N SCORE: the level just solved, total and lines,
+#   levels             then the run's TOTAL SCORE so far below the box -- and
+#                      CONTINUE / GIVE UP when the player asked to wait
+#                      (Settings.ask_next_level).
+#   infinite, over     FINAL SCORE: the run's total, made of the SOLVED LEVELS
+#                      added up, whatever the last (unsolved) level still paid
+#                      (e.g. PLACED SHAPES on giving up), and the STRIKE.
+func _end_screen_entries(outcome: String, final: bool) -> Array[MenuEntry]:
+	var infinite := setup.play_type == GameSetup.PlayType.INFINITE
+	var entries: Array[MenuEntry] = [MenuEntry.heading(outcome)]
+	if not infinite:
+		entries.append(MenuEntry.heading("FINAL SCORE", UiStyle.TITLE_FONT))
+		entries.append(MenuEntry.group(_level_detail(score.last_level())))
+	elif not final:
+		entries.append(MenuEntry.heading("LEVEL %d SCORE" % score.level_count(), UiStyle.TITLE_FONT))
+		entries.append(MenuEntry.group(_level_detail(score.last_level())))
+		entries.append(MenuEntry.info("TOTAL SCORE", func(): return _points_text(score.total())))
+		if Settings.ask_next_level:
+			entries.append(MenuEntry.button_row([
+				MenuEntry.button("CONTINUE", _new_game),
+				MenuEntry.button("GIVE UP", _on_give_up_pressed),
+			]))
+	else:
+		entries.append(MenuEntry.heading("FINAL SCORE", UiStyle.TITLE_FONT))
+		var detail: Array = [
+			MenuEntry.heading(_points_text(score.total(true)), UiStyle.TITLE_FONT),
+			MenuEntry.info("SOLVED LEVELS", func(): return _points_text(score.solved_points(), true)),
+		]
+		var last := score.last_level()
+		if last != null and not last.solved:
+			for line in last.lines:
+				if int(line[1]) > 0:
+					detail.append(_score_line(line))
+		detail.append(MenuEntry.info("STRIKE\u00a0:\u00a0%d" % score.strikes, func(): return _points_text(score.strike_points(), true)))
+		entries.append(MenuEntry.group(detail))
+	if final:
+		entries.append(MenuEntry.button_row([
+			MenuEntry.button("REPLAY", _on_replay_pressed),
+			MenuEntry.button("BACK TO MAIN SCREEN", func(): exit_requested.emit()),
+		]))
+	return entries
+
+# One level's total, then each of its lines.
+func _level_detail(level: ScoreTally.Level) -> Array:
+	var detail: Array = [MenuEntry.heading(_points_text(level.total() if level != null else 0), UiStyle.TITLE_FONT)]
+	if level != null:
+		for line in level.lines:
+			detail.append(_score_line(line))
+	return detail
+
+static func _score_line(line: Array) -> MenuEntry:
+	return MenuEntry.info(line[0], func(): return _points_text(line[1], true))
+
+static func _points_text(points: int, signed: bool = false) -> String:
+	return ("+%d POINTS" if signed else "%d POINTS") % points
+
+func _show_end_screen(outcome: String, final: bool = true) -> void:
+	_options_panel.close()
+	Selection.deselect()
+	_end_screen_final = final
+	_end_screen.open(_end_screen_entries(outcome, final))
+
+func _build_menu_buttons() -> void:
+	var slots := _menu_zone_slots()
+	_menu_slot_count = slots.size()
+	for slot in slots.size():
+		for entry in slots[slot]:
+			var button := Button.new()
+			button.text = entry.text
+			button.focus_mode = Control.FOCUS_NONE
+			button.pressed.connect(func(): entry.action.call())
+			add_child(button)
+			_menu_entries.append(entry)
+			_menu_buttons.append(button)
+			_menu_button_slots.append(slot)
+	_refresh_menu_buttons()
+
+func _refresh_menu_buttons() -> void:
+	for i in _menu_buttons.size():
+		_menu_buttons[i].visible = _menu_entries[i].is_visible()
+		_menu_buttons[i].disabled = not _menu_entries[i].is_enabled()
+
+# Esc / Android back: the options panel -- or, once the game is over, back
+# to the menus, as the end screen's own button does.
+func toggle_options() -> void:
+	if _give_up_confirm.visible:
+		_give_up_confirm.close()
+		return
+	if _end_screen.visible:
+		# Nothing to do while infinite mode shows the score between rounds.
+		if _end_screen_final:
+			exit_requested.emit()
+		return
+	if _options_panel.visible:
+		_options_panel.close()
+		return
+	Selection.deselect()
+	_options_panel.open(_options_entries())
+
+# A new difficulty picked in the options starts a fresh round at it.
+func _on_options_closed() -> void:
+	if _pending_difficulty != difficulty_level:
+		difficulty_level = _pending_difficulty
+		await _new_game()
+
+func _unhandled_input(event: InputEvent) -> void:
+	if event.is_action_pressed("ui_cancel"):
+		toggle_options()
+		get_viewport().set_input_as_handled()
 
 # Fires whenever this (full-rect-anchored) control's own size changes, which
 # happens automatically whenever the viewport/browser window does. Ignored
@@ -179,12 +409,14 @@ func _new_game() -> void:
 	_ready_for_resize = false
 	for mode in _modes:
 		mode.stop()
-	_lose_screen.visible = false
+	_solved_timer.stop()
+	_next_round_timer.stop()
+	_end_screen.close()
+	_refresh_menu_buttons()
 	Selection.deselect()
 	Selection.set_cells([])
 	tray.clear()
 	shifter.clear()
-	result_label.text = ""
 
 	# On web, the browser canvas can take a couple of frames to report its
 	# real size after load -- wait for this root Control to actually have one
@@ -193,9 +425,17 @@ func _new_game() -> void:
 	while size.x <= 0.0 or size.y <= 0.0:
 		await get_tree().process_frame
 
+	if setup.play_type == GameSetup.PlayType.INFINITE:
+		difficulty_level = _progression.next_level()
 	var mode := active_mode()
+	# A daily game's level only depends on the day (and the mode); the rest
+	# of the round (the scramble, HELP's picks...) stays random.
+	if setup.play_type == GameSetup.PlayType.DAILY:
+		seed(setup.daily_seed())
 	mode.apply_difficulty(difficulty_level)
 	level = LevelGenerator.generate(mode.difficulty.general)
+	if setup.play_type == GameSetup.PlayType.DAILY:
+		randomize()
 	mode.begin_round(level)
 	_update_counter_label()
 	solution_preview.visible = mode.shows_solution_preview()
@@ -325,7 +565,6 @@ func _apply_zones() -> void:
 	_apply_items(zones["items"], config)
 	_apply_menu(zones["menu"], config)
 	_apply_info(zones["info"], config)
-	_apply_result(zones["scramble"], config)
 
 # The ShapeShifter and Divisor share the playable items zone in equal
 # slots, laid along its longer side (a column in the horizontal distribution,
@@ -360,15 +599,22 @@ func _apply_items(zone: Rect2, config: LayoutConfig) -> void:
 		items[i].size = Vector2(side, side)
 		items[i].position = slots[i].get_center() - Vector2(side, side * height_factor) * 0.5
 
-# The mode switch above the Replay button, one row each -- side by side in
-# the vertical distribution, to keep its last row short. Both are fitted
-# from the same (longest) sample, so they come out the same size whatever
-# the mode button currently says.
+# The menu zone's slots (see _menu_zone_slots()) -- stacked, or side by side
+# in the vertical distribution, to keep its last row short. Every button is
+# fitted from the same (longest) text, so they all come out the same size.
 func _apply_menu(zone: Rect2, config: LayoutConfig) -> void:
-	var buttons: Array[Button] = [mode_button, difficulty_button, replay_button]
-	var rows := _cut(zone, not is_vertical_layout(), [1.0 / 3.0, 1.0 / 3.0, 1.0 / 3.0])
-	for i in buttons.size():
-		_fit_button(buttons[i], rows[i], config.info_text_scale)
+	if _menu_slot_count == 0:
+		return
+	var shares: Array = []
+	for slot in _menu_slot_count:
+		shares.append(1.0 / _menu_slot_count)
+	var sample := ""
+	for button in _menu_buttons:
+		if _text_width(button.text) > _text_width(sample):
+			sample = button.text
+	var rows := _cut(zone, not is_vertical_layout(), shares)
+	for i in _menu_buttons.size():
+		_fit_button(_menu_buttons[i], rows[_menu_button_slots[i]], sample, config.info_text_scale)
 
 # The timer above the counter, both left-aligned in the info zone -- or,
 # in the vertical distribution, side by side on one line (the counter just
@@ -411,25 +657,14 @@ func _apply_info_in_line(zone: Rect2, config: LayoutConfig, timer_sample: String
 static func _text_width(text: String) -> float:
 	return ThemeDB.fallback_font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, 100).x
 
-func _fit_button(button: Button, row: Rect2, text_scale: float) -> void:
-	var font_size: int = _fit_font_size("Memory", row.size.x * 0.7, row.size.y * 0.45, text_scale)
+# Styled like the menus' buttons (see UiStyle), sized to fit `sample`.
+func _fit_button(button: Button, row: Rect2, sample: String, text_scale: float) -> void:
+	var font_size: int = _fit_font_size(sample, row.size.x * 0.75, row.size.y * 0.4, text_scale)
+	# The style's border and corners follow the button's own size.
+	UiStyle.style_button(button, font_size / UiStyle.LARGE_FONT, UiStyle.LARGE_FONT)
 	button.add_theme_font_size_override("font_size", font_size)
-	button.size = Vector2(minf(row.size.x, font_size * 5.5), minf(row.size.y * 0.85, font_size * 2.0))
+	button.size = Vector2(minf(row.size.x, _text_width(sample) * font_size / 100.0 + font_size * 2.0), minf(row.size.y * 0.85, font_size * 2.2))
 	button.position = row.get_center() - button.size * 0.5
-
-# The scramble zone is empty once the round is won, so the result shows up
-# in its middle.
-func _apply_result(zone: Rect2, config: LayoutConfig) -> void:
-	var band_height: float = zone.size.y * 0.2
-	var band := Rect2(zone.position + Vector2(0.0, (zone.size.y - band_height) * 0.5), Vector2(zone.size.x, band_height))
-	_fit_label(result_label, band, "Solved in 00:00!", 0.7, config.info_text_scale)
-
-func _fit_label(label: Label, rect: Rect2, sample: String, height_share: float, text_scale: float) -> void:
-	label.add_theme_font_size_override("font_size", _fit_font_size(sample, rect.size.x * 0.95, rect.size.y * height_share, text_scale))
-	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	label.size = rect.size
-	label.position = rect.position
 
 # Largest font size at which `sample` fits both max_width and max_height,
 # then scaled by text_scale.
@@ -473,14 +708,17 @@ func _start_round() -> void:
 	chronometer_label.text = active_mode().timer_text()
 	active_mode().start_round()
 
-func _on_round_lost(reason: String) -> void:
+# `extra_lines` are score lines on top of the mode's own (see ScoreTally),
+# e.g. what giving up is worth.
+func _on_round_lost(reason: String, extra_lines: Array = []) -> void:
 	if state != State.PLAYING and state != State.SHOWING:
 		return
 	state = State.LOST
 	active_mode().stop()
 	Selection.deselect()
 	update_help_button()
-	_lose_screen.show_reason(reason)
+	score.add_level(active_mode().score_lines(false) + extra_lines, false)
+	_show_end_screen(reason)
 
 # Shrinks each control toward its own center and resolves once they're gone,
 # returning false if Replay was pressed meanwhile (the round no longer
@@ -524,16 +762,28 @@ func scramble_pieces() -> void:
 	update_help_button()
 	tray.launch_from(pieces, board, Tray.ALL_SIDES)
 
+# Infinite mode shows the score so far, then goes on to the next round (the
+# score carries over) -- by itself, or on CONTINUE if the player asked to
+# wait. Any other game is over.
+func _on_solved_hold_over() -> void:
+	if setup.play_type == GameSetup.PlayType.INFINITE:
+		_show_end_screen(active_mode().won_text(), false)
+		if not Settings.ask_next_level:
+			_next_round_timer.start(INFINITE_SCORE_SECONDS)
+	else:
+		_show_end_screen(active_mode().won_text())
+
 func update_help_button() -> void:
 	help_button.disabled = not active_mode().can_help()
 
 func _on_help_pressed() -> void:
 	active_mode().help()
 
-# The "+15" Memory mode's HELP adds to the timer.
+# Any jump of the timer outside its normal ticking (see
+# ModeRules.time_penalty).
 func _show_time_penalty(seconds: float) -> void:
 	var label := Label.new()
-	label.text = "+%d" % int(seconds)
+	label.text = "%+d" % int(seconds)
 	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	label.add_theme_font_size_override("font_size", maxi(int(chronometer_label.get_theme_font_size("font_size") * PENALTY_FONT_RATIO), 8))
 	label.add_theme_color_override("font_color", PENALTY_COLOR)
@@ -602,10 +852,18 @@ func _check_solution(open_cells: Array) -> void:
 				cell.lock()
 		else:
 			wrong_cells.append(cell)
-	if not wrong_cells.is_empty():
-		active_mode().on_mistakes(wrong_cells.size())
+	# A mistake is a misplaced shape: one per shape sitting in a wrong cell
+	# (one needing another shape, or one that must stay empty). A wrong cell
+	# with no shape in it -- one whose shape went somewhere else -- isn't a
+	# mistake of its own, so a single misplaced shape never counts twice.
+	var mistakes := 0
+	for cell in wrong_cells:
+		if cell.current_piece != null:
+			mistakes += 1
+	if mistakes > 0:
+		active_mode().on_mistakes(mistakes)
 	_update_counter_label()
-	# Too many mistakes -- the board stays as it is under the lose screen.
+	# Too many mistakes -- the board stays as it is under the end screen.
 	if state != State.PLAYING:
 		return
 
@@ -644,7 +902,10 @@ func _check_solution(open_cells: Array) -> void:
 			cell.lock()
 		state = State.WON
 		active_mode().stop()
+		active_mode().on_solved()
+		chronometer_label.text = active_mode().timer_text()
 		update_help_button()
-		result_label.text = active_mode().won_text()
+		score.add_level(active_mode().score_lines(true), true)
+		_solved_timer.start(SOLVED_HOLD_SECONDS)
 	else:
 		tray.launch_from(wrong_pieces, board, Tray.ALL_SIDES)

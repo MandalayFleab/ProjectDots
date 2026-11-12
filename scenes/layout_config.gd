@@ -53,7 +53,7 @@ var board_fill: float = 1.0
 # How much of its slot each playable item (ShapeShifter/Divisor) fills.
 var items_fill: float = 0.85
 # Multiplier over the auto-fitted font size of every text (info, menu
-# buttons, result).
+# buttons).
 var info_text_scale: float = 1.0
 # Puzzle mode's solution preview: its slot's share of the playable items
 # zone's length (the ShapeShifter/Divisor split the rest). Reserved in

@@ -12,9 +12,6 @@ const ShapePieceScene := preload("res://scenes/shape_piece/shape_piece.tscn")
 const HELP_TIME_PENALTY := 15.0
 const HELP_MOVE_TIME_PENALTY := 5.0
 
-# Whenever HELP adds its time penalty -- lets the game show the "+15".
-signal time_penalty(seconds: float)
-
 var parameters: MemoryParameters
 var elapsed_time: float = 0.0
 var mistakes: int = 0
@@ -82,8 +79,9 @@ func _on_reveal_timer_timeout() -> void:
 func tick(delta: float) -> void:
 	elapsed_time += delta
 
-# Every wrong cell in a check is one mistake -- going past the allowed ones
-# loses the round.
+# Every misplaced shape in a check is one mistake (see
+# GameManager._check_solution()) -- going past the allowed ones loses the
+# round.
 func on_mistakes(count: int) -> void:
 	mistakes += count
 	if mistakes > parameters.mistakes_allowed:
@@ -100,6 +98,23 @@ func counter_sample() -> String:
 
 func won_text() -> String:
 	return "Solved in %s!" % format_time(int(elapsed_time))
+
+func score_lines(solved: bool) -> Array:
+	return [
+		["SOLVE TIME", time_points(elapsed_time, parameters.score_floor_seconds) if solved else 0],
+		["NO MISTAKES", FLAWLESS_POINTS if solved and mistakes == 0 else 0],
+	]
+
+# Played without the allowed places indicator: the solve time comes down by
+# the difficulty's reduction, shown off the timer like HELP's penalty.
+func on_solved() -> void:
+	if game.setup.places_indicator:
+		return
+	var reduction: float = minf(parameters.indicator_off_time_reduction, elapsed_time)
+	if reduction <= 0.0:
+		return
+	elapsed_time -= reduction
+	time_penalty.emit(-reduction)
 
 # Plays one still-unsolved shape into its cell for the player (see
 # HelpAutoplay), at the cost of a use and a time penalty: HELP_TIME_PENALTY,

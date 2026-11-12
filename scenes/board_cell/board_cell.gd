@@ -77,9 +77,12 @@ func remember_tried(piece: ShapePiece) -> void:
 	if not _has_tried(piece.shape_type, piece.color, piece.is_big):
 		_tried_specs.append({"shape_type": piece.shape_type, "color": piece.color, "is_big": piece.is_big})
 
+# A cell refusing a shape already tried (and rejected) in it is part of the
+# allowed places indicator -- with it off, only locked cells and big/normal
+# size mismatches are refused.
 func can_accept(piece: ShapePiece) -> bool:
 	return not locked and piece.is_big == expects_big() \
-		and not _has_tried(piece.shape_type, piece.color, piece.is_big)
+		and not (Selection.places_indicator and _has_tried(piece.shape_type, piece.color, piece.is_big))
 
 func set_highlight(state: Highlight) -> void:
 	if highlight == state:
